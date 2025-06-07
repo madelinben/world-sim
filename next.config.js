@@ -5,6 +5,14 @@
 import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
-const config = {};
+const config = {
+  output: 'export',
+  basePath: '/world-sim',
+  assetPrefix: '/world-sim',
+  trailingSlash: true,
+  images: {
+    unoptimized: true
+  }
+};
 
 export default config;

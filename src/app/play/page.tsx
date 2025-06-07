@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Game } from '~/game/engine/Game';
 
-export default function PlayPage() {
+function PlayGameComponent() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
   const searchParams = useSearchParams();
@@ -41,5 +41,17 @@ export default function PlayPage() {
         style={{ display: 'block' }}
       />
     </div>
+  );
+}
+
+export default function PlayPage() {
+  return (
+    <Suspense fallback={
+      <div className="fixed inset-0 bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading World Simulator...</div>
+      </div>
+    }>
+      <PlayGameComponent />
+    </Suspense>
   );
 }
