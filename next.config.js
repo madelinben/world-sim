@@ -6,10 +6,13 @@ import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
 const config = {
-  output: 'export',
-  basePath: '/world-sim',
-  assetPrefix: '/world-sim',
-  trailingSlash: true,
+  // Only apply GitHub Pages settings in production
+  ...(process.env.NODE_ENV === 'production' && {
+    output: 'export',
+    basePath: '/world-sim',
+    assetPrefix: '/world-sim',
+    trailingSlash: true,
+  }),
   images: {
     unoptimized: true
   },
