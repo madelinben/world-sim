@@ -20,8 +20,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "export": "next build",
-    "deploy": "next build && gh-pages -d out",
-    "predeploy": "npm run export"
+    "deploy": "next build && gh-pages -d out"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
