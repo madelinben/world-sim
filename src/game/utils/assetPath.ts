@@ -6,11 +6,8 @@ export function getAssetPath(path: string): string {
   // Remove leading slash if present
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
 
-  // In production (GitHub Pages), we need to include the basePath
-  if (typeof window !== 'undefined' && window.location.hostname === 'madelinben.github.io') {
-    return `/world-sim/${cleanPath}`;
-  }
+  // Use Next.js environment or detect GitHub Pages
+  const basePath = process.env.NODE_ENV === 'production' ? '/world-sim' : '';
 
-  // In development, use the path as-is with leading slash
-  return `/${cleanPath}`;
+  return `${basePath}/${cleanPath}`;
 }
