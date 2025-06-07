@@ -1,3 +1,5 @@
+import { getAssetPath } from '~/game/utils/assetPath';
+
 export interface SpriteFrame {
   image: HTMLImageElement;
   x: number;
@@ -42,7 +44,7 @@ export class Sprite {
   private async loadImage(): Promise<void> {
     try {
       this.image = new Image();
-      this.image.src = this.config.imagePath;
+      this.image.src = getAssetPath(this.config.imagePath);
 
       await new Promise<void>((resolve, reject) => {
         if (!this.image) {

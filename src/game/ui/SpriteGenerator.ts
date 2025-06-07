@@ -1,4 +1,5 @@
 import { createNoise2D } from 'simplex-noise';
+import { getAssetPath } from '~/game/utils/assetPath';
 
 export interface SpriteFrame {
     image: HTMLImageElement;
@@ -88,7 +89,7 @@ export class SpriteGenerator {
         for (const spritePath of SpriteGenerator.SPRITE_FILES) {
             try {
                 const image = new Image();
-                image.src = spritePath;
+                image.src = getAssetPath(spritePath);
                 await new Promise<void>((resolve, reject) => {
                     image.onload = () => resolve();
                     image.onerror = () => {
