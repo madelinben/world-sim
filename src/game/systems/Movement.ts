@@ -11,9 +11,19 @@ export class Movement {
     private moveCooldown = 0;
     private moveDelay = 120; // ms between moves when holding a key
     private world: World;
+    private onMoveCallback?: (direction: 'up' | 'down' | 'left' | 'right') => void;
+    private onDirectionChangeCallback?: (direction: 'up' | 'down' | 'left' | 'right', moved: boolean) => void;
 
     constructor(world: World) {
         this.world = world;
+    }
+
+    public setMoveCallback(callback: (direction: 'up' | 'down' | 'left' | 'right') => void): void {
+        this.onMoveCallback = callback;
+    }
+
+    public setDirectionChangeCallback(callback: (direction: 'up' | 'down' | 'left' | 'right', moved: boolean) => void): void {
+        this.onDirectionChangeCallback = callback;
     }
 
     private canMoveToTile(tile: { value: string; trees?: Tree[]; cactus?: Cactus[] } | null): boolean {
@@ -22,11 +32,19 @@ export class Movement {
         // Check for impassable tiles
         if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') return false;
 
-        // Check for trees (impassable when present)
-        if (tile.trees && tile.trees.length > 0) return false;
+        // Check for trees (impassable when present and alive, but passable when cut down)
+        if (tile.trees && tile.trees.length > 0) {
+            // Allow passage if all trees are cut down (destroyed/health <= 0)
+            const hasLivingTrees = tile.trees.some(tree => tree.getHealth() > 0);
+            if (hasLivingTrees) return false;
+        }
 
-        // Check for cactus (impassable when present)
-        if (tile.cactus && tile.cactus.length > 0) return false;
+        // Check for cactus (impassable when present and alive)
+        if (tile.cactus && tile.cactus.length > 0) {
+            // Allow passage if all cactus are destroyed
+            const hasLivingCactus = tile.cactus.some(cactus => cactus.getHealth() > 0);
+            if (hasLivingCactus) return false;
+        }
 
         return true;
     }
@@ -59,48 +77,68 @@ export class Movement {
             return;
         }
 
-        let moved = false;
+        let attemptedMove = false;
+        let actuallyMoved = false;
+        let moveDirection: 'up' | 'down' | 'left' | 'right' | null = null;
         const newPosition = { ...player.position };
 
         if (controls.wasKeyJustPressed('up') || controls.isKeyPressed('up')) {
             newPosition.y -= this.TILE_SIZE;
+            attemptedMove = true;
+            moveDirection = 'up';
         } else if (controls.wasKeyJustPressed('down') || controls.isKeyPressed('down')) {
             newPosition.y += this.TILE_SIZE;
+            attemptedMove = true;
+            moveDirection = 'down';
         } else if (controls.wasKeyJustPressed('left') || controls.isKeyPressed('left')) {
             newPosition.x -= this.TILE_SIZE;
+            attemptedMove = true;
+            moveDirection = 'left';
         } else if (controls.wasKeyJustPressed('right') || controls.isKeyPressed('right')) {
             newPosition.x += this.TILE_SIZE;
+            attemptedMove = true;
+            moveDirection = 'right';
         }
 
-        // Check if we can move to the new position
-        const targetTile = this.world.getTile(newPosition.x / this.TILE_SIZE, newPosition.y / this.TILE_SIZE);
-        if (this.canMoveToTile(targetTile)) {
-            player.position = newPosition;
-            moved = true;
+                // Check if we can move to the new position
+        if (attemptedMove) {
+            const targetTile = this.world.getTile(newPosition.x / this.TILE_SIZE, newPosition.y / this.TILE_SIZE);
+            if (this.canMoveToTile(targetTile)) {
+                player.position = newPosition;
+                actuallyMoved = true;
+            } else {
+                console.log(`Movement blocked - cannot move to ${targetTile?.value || 'UNKNOWN'} tile`);
+            }
+
+            // Always trigger direction change callback when a movement was attempted
+            if (moveDirection && this.onDirectionChangeCallback) {
+                this.onDirectionChangeCallback(moveDirection, actuallyMoved);
+            }
         }
 
-        if (moved) {
+        if (actuallyMoved) {
             // Snap to nearest tile center
             player.position.x = Math.round(player.position.x / this.TILE_SIZE) * this.TILE_SIZE;
             player.position.y = Math.round(player.position.y / this.TILE_SIZE) * this.TILE_SIZE;
             this.moveCooldown = this.moveDelay;
-            // Log player and adjacent tile world coordinates and tile indices
-            const left = Player.getLeftTile(player.position, this.TILE_SIZE);
-            const right = Player.getRightTile(player.position, this.TILE_SIZE);
-            const above = Player.getAboveTile(player.position, this.TILE_SIZE);
-            const below = Player.getBelowTile(player.position, this.TILE_SIZE);
-            const toIndex = (pos: {x: number, y: number}) => ({ x: pos.x / this.TILE_SIZE, y: pos.y / this.TILE_SIZE });
-            let worldTile = null, leftTile = null, rightTile = null, aboveTile = null, belowTile = null;
-            worldTile = this.world.getTile(player.position.x / this.TILE_SIZE, player.position.y / this.TILE_SIZE);
-            leftTile = this.world.getTile(left.x / this.TILE_SIZE, left.y / this.TILE_SIZE);
-            rightTile = this.world.getTile(right.x / this.TILE_SIZE, right.y / this.TILE_SIZE);
-            aboveTile = this.world.getTile(above.x / this.TILE_SIZE, above.y / this.TILE_SIZE);
-            belowTile = this.world.getTile(below.x / this.TILE_SIZE, below.y / this.TILE_SIZE);
-            console.log('Current tile:', worldTile.value);
-            console.log('Left tile:', leftTile.value);
-            console.log('Right tile:', rightTile.value);
-            console.log('Above tile:', aboveTile.value);
-            console.log('Below tile:', belowTile.value);
+
+            // Log current tile with structure info
+            const currentTile = this.world.getTile(player.position.x / this.TILE_SIZE, player.position.y / this.TILE_SIZE);
+            let tileInfo = currentTile?.value || 'UNKNOWN';
+            if (currentTile?.trees && currentTile.trees.length > 0) {
+                const tree = currentTile.trees[0];
+                tileInfo += ` (Tree: ${tree?.getHealth()}/${tree?.getMaxHealth()} HP)`;
+            }
+            if (currentTile?.cactus && currentTile.cactus.length > 0) {
+                const cactus = currentTile.cactus[0];
+                tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP)`;
+            }
+            console.log('Current tile:', tileInfo);
+
+            // Call the move callback to set direction and log facing tile
+            if (this.onMoveCallback && moveDirection) {
+                this.onMoveCallback(moveDirection);
+            }
         }
     }
 }

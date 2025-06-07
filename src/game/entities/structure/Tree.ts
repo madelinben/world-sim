@@ -1,5 +1,5 @@
 import { Sprite } from '../../ui/Sprite';
-import { type AnimatedEntity } from '../../systems/AnimationSystem';
+import { Structure, type StructureConfig } from './Structure';
 
 export enum TreeGrowthStage {
   CUT_DOWN = 0,
@@ -8,41 +8,47 @@ export enum TreeGrowthStage {
   FULL = 3
 }
 
-export interface TreeConfig {
-  x: number;
-  y: number;
+export interface TreeConfig extends Omit<StructureConfig, 'health' | 'dropValue' | 'dropType'> {
   initialStage?: TreeGrowthStage;
   growthTimePerStage?: number; // in milliseconds
 }
 
-export class Tree implements AnimatedEntity {
-  public readonly x: number;
-  public readonly y: number;
-  private sprite: Sprite;
+export class Tree extends Structure {
   private currentStage: TreeGrowthStage;
   private timeSinceLastGrowth = 0;
   private growthTimePerStage: number;
   private isGrowthComplete = false;
 
-  constructor(config: TreeConfig) {
-    this.x = config.x;
-    this.y = config.y;
+    constructor(config: TreeConfig) {
+    super({
+      ...config,
+      health: 50,
+      dropValue: 5,
+      dropType: 'wood'
+    });
+
     this.currentStage = config.initialStage ?? TreeGrowthStage.YOUNG;
     this.growthTimePerStage = config.growthTimePerStage ?? 3600000; // 1 hour in milliseconds
 
-    // Create sprite for tree animation
-    this.sprite = new Sprite({
+    // Recreate sprite with correct parameters
+    this.sprite = this.createSprite();
+
+    // Set initial frame
+    this.sprite.setFrame(this.currentStage);
+  }
+
+  protected createSprite(): Sprite {
+    const growthTime = this.growthTimePerStage ?? 3600000; // Default to 1 hour
+
+    return new Sprite({
       imagePath: '/sprites/Nature/Trees.png',
       frameWidth: 16,
       frameHeight: 16,
       totalFrames: 4,
       framesPerRow: 4,
-      animationDuration: this.growthTimePerStage * 4, // Total growth time
+      animationDuration: growthTime * 4, // Total growth time
       loop: false // Don't loop, tree stops growing at full stage
     });
-
-    // Set initial frame
-    this.sprite.setFrame(this.currentStage);
   }
 
   public update(deltaTime: number): void {
@@ -124,5 +130,16 @@ export class Tree implements AnimatedEntity {
     this.sprite.setFrame(stage);
     this.isGrowthComplete = stage === TreeGrowthStage.FULL;
     this.timeSinceLastGrowth = 0;
+  }
+
+  public takeDamage(damage: number): { destroyed: boolean; dropValue: number; dropType: string } {
+    const result = super.takeDamage(damage);
+
+    // If tree is destroyed, set to CUT_DOWN stage (broken tree sprite)
+    if (result.destroyed) {
+      this.cutDown();
+    }
+
+    return result;
   }
 }

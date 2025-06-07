@@ -12,6 +12,18 @@ export class Controls {
         ArrowLeft: 'left',
         d: 'right',
         ArrowRight: 'right',
+        q: 'attack',
+        f: 'interact',
+        e: 'inventory',
+        '1': 'slot1',
+        '2': 'slot2',
+        '3': 'slot3',
+        '4': 'slot4',
+        '5': 'slot5',
+        '6': 'slot6',
+        '7': 'slot7',
+        '8': 'slot8',
+        '9': 'slot9',
     };
 
     // Mouse drag state
@@ -38,10 +50,13 @@ export class Controls {
             const mapped = Controls.keyMap[e.key] ?? e.key.toLowerCase();
             if (!this.keyState[mapped]) {
                 this.justPressed[mapped] = true;
+                // Only log meaningful key operations
+                if (mapped in Controls.keyMap || ['attack', 'interact', 'inventory'].includes(mapped) || mapped.startsWith('slot')) {
+                    console.log(`Key pressed: ${e.key} → ${mapped}`);
+                }
             }
             this.keyState[mapped] = true;
             this.keys.add(mapped);
-            console.log('Key down:', mapped, this.keyState);
         });
 
         window.addEventListener('keyup', (e) => {
@@ -49,7 +64,6 @@ export class Controls {
             this.keyState[mapped] = false;
             this.keys.delete(mapped);
             this.justPressed[mapped] = false;
-            console.log('Key up:', mapped, this.keyState);
         });
     }
 
@@ -59,7 +73,6 @@ export class Controls {
             this.dragStart = { x: e.clientX, y: e.clientY };
             this.lastMouse = { x: e.clientX, y: e.clientY };
             this.dragDelta = { x: 0, y: 0 };
-            console.log('Mouse down:', this.dragStart);
         });
         canvas.addEventListener('mousemove', (e) => {
             if (this.isDragging && this.lastMouse) {
@@ -68,30 +81,24 @@ export class Controls {
                 this.dragDelta.x += dx;
                 this.dragDelta.y += dy;
                 this.lastMouse = { x: e.clientX, y: e.clientY };
-                console.log('Mouse drag:', this.dragDelta);
             }
         });
         canvas.addEventListener('mouseup', (e) => {
             this.isDragging = false;
             this.dragStart = null;
             this.lastMouse = null;
-            console.log('Mouse up');
         });
         canvas.addEventListener('mouseleave', (e) => {
             this.isDragging = false;
             this.dragStart = null;
             this.lastMouse = null;
-            console.log('Mouse leave');
         });
     }
 
     public update(): void {
         // Reset justPressed after each frame
         this.justPressed = {};
-        // Reset drag delta after each frame
-        if (this.dragDelta.x !== 0 || this.dragDelta.y !== 0) {
-            console.log('Drag delta applied:', this.dragDelta);
-        }
+        // Reset drag delta after each frame (no logging)
     }
 
     public isKeyPressed(key: string): boolean {

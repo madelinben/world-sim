@@ -7,9 +7,10 @@ export type TileType =
   | 'DEEP_WATER'
   | 'SHALLOW_WATER'
   | 'RIVER'
-  | 'YELLOW_SAND'
+  | 'SAND'
   | 'GRASS'
   | 'MUD'
+  | 'DIRT'
   | 'CLAY'
   | 'FOREST'
   | 'GRAVEL'
@@ -32,6 +33,7 @@ export interface Tile {
   trees?: Tree[];
   cactus?: Cactus[];
   spriteId?: string;
+  dirtTimer?: number; // For DIRT -> GRASS regeneration
 }
 
 export class WorldGenerator {
@@ -84,8 +86,8 @@ export class WorldGenerator {
           tile.trees = this.generateTrees(worldX, worldY, 0.05); // 5% chance for grass
         }
 
-        // Add cactus to YELLOW_SAND tiles (5% chance)
-        if (value === 'YELLOW_SAND') {
+        // Add cactus to SAND tiles (5% chance)
+        if (value === 'SAND') {
           tile.cactus = this.generateCactus(worldX, worldY, 0.05); // 5% chance for sand
         }
 
@@ -213,7 +215,7 @@ export class WorldGenerator {
       }
       // Add sand around rivers
       if (Math.abs(riverValue - 0.75) < riverWidth + riverWinding + 0.05) {
-        return 'YELLOW_SAND';
+        return 'SAND';
       }
     }
 
@@ -238,7 +240,7 @@ export class WorldGenerator {
       if (height > 0.6) return 'COBBLESTONE';
       if (humidity > 0.7) return 'FOREST';
       if (humidity > 0.4) return 'GRASS';
-      if (humidity > 0.2) return 'YELLOW_SAND'; // Added sand for low humidity areas
+      if (humidity > 0.2) return 'SAND'; // Added sand for low humidity areas
       return 'STONE'; // Changed from GRAVEL to STONE
     } else if (temperature < 0.7) {
       // Temperate regions
@@ -251,8 +253,8 @@ export class WorldGenerator {
         return Math.random() < 0.7 ? 'CLAY' : 'MUD';
       }
       // Beach areas
-      if (height < 0.25) return 'YELLOW_SAND';
-      if (humidity < 0.3) return 'YELLOW_SAND'; // Added sand for low humidity areas
+      if (height < 0.25) return 'SAND';
+      if (humidity < 0.3) return 'SAND'; // Added sand for low humidity areas
       return 'GRASS';
     } else {
       // Hot regions
@@ -264,11 +266,11 @@ export class WorldGenerator {
         if (humidity > 0.3) {
           return Math.random() < 0.8 ? 'CLAY' : 'MUD';
         }
-        return 'YELLOW_SAND';
+        return 'SAND';
       }
       // Increased sand generation in hot regions
-      if (humidity < 0.5) return 'YELLOW_SAND';
-      if (Math.random() < 0.7) return 'YELLOW_SAND'; // 70% chance of sand in hot regions
+      if (humidity < 0.5) return 'SAND';
+      if (Math.random() < 0.7) return 'SAND'; // 70% chance of sand in hot regions
       return 'GRASS';
     }
   }
@@ -289,8 +291,8 @@ export class WorldGenerator {
       tile.trees = this.generateTrees(x, y, 0.05); // 5% chance for grass
     }
 
-    // Add cactus to YELLOW_SAND tiles (5% chance)
-    if (value === 'YELLOW_SAND') {
+    // Add cactus to SAND tiles (5% chance)
+    if (value === 'SAND') {
       tile.cactus = this.generateCactus(x, y, 0.05); // 5% chance for sand
     }
 

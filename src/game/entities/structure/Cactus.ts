@@ -1,5 +1,5 @@
 import { Sprite } from '../../ui/Sprite';
-import { type AnimatedEntity } from '../../systems/AnimationSystem';
+import { Structure, type StructureConfig } from './Structure';
 
 export enum CactusVariant {
   VARIANT_1 = 1,
@@ -11,18 +11,13 @@ export enum CactusVariant {
 // Variant 2: index 5 (young) → index 6 → index 7 (mature)
 // Variant 3: index 1 (young) → index 0 (mature)
 
-export interface CactusConfig {
-  x: number;
-  y: number;
+export interface CactusConfig extends Omit<StructureConfig, 'health' | 'dropValue' | 'dropType'> {
   variant?: CactusVariant;
   initialStage?: number;
   growthTimePerStage?: number; // in milliseconds
 }
 
-export class Cactus implements AnimatedEntity {
-  public readonly x: number;
-  public readonly y: number;
-  private sprite: Sprite;
+export class Cactus extends Structure {
   private variant: CactusVariant;
   private currentStage: number;
   private timeSinceLastGrowth = 0;
@@ -30,9 +25,14 @@ export class Cactus implements AnimatedEntity {
   private isGrowthComplete = false;
   private frameSequence: number[];
 
-  constructor(config: CactusConfig) {
-    this.x = config.x;
-    this.y = config.y;
+        constructor(config: CactusConfig) {
+    super({
+      ...config,
+      health: 15,
+      dropValue: 1,
+      dropType: 'cactus'
+    });
+
     this.variant = config.variant ?? this.getRandomVariant();
     this.currentStage = config.initialStage ?? 0; // Start at stage 0 (young)
     this.growthTimePerStage = config.growthTimePerStage ?? 600000; // 10 minutes in milliseconds
@@ -40,24 +40,31 @@ export class Cactus implements AnimatedEntity {
     // Set frame sequence based on variant
     this.frameSequence = this.getFrameSequence(this.variant);
 
-    // Create sprite for cactus animation
-    this.sprite = new Sprite({
-      imagePath: '/sprites/Nature/Cactus.png',
-      frameWidth: 16,
-      frameHeight: 16,
-      totalFrames: 8, // Assuming 8 frames in the sprite sheet
-      framesPerRow: 8,
-      animationDuration: this.growthTimePerStage * this.frameSequence.length,
-      loop: false // Don't loop, cactus stops growing at final stage
-    });
+    // Now recreate the sprite with correct parameters
+    this.sprite = this.createSprite();
 
     // Set initial frame
     this.sprite.setFrame(this.frameSequence[this.currentStage] ?? 0);
   }
 
+  protected createSprite(): Sprite {
+    const frameSequenceLength = this.frameSequence?.length ?? 2; // Default to 2 if not set yet
+    const growthTime = this.growthTimePerStage ?? 600000; // Default growth time
+
+    return new Sprite({
+      imagePath: '/sprites/Nature/Cactus.png',
+      frameWidth: 16,
+      frameHeight: 16,
+      totalFrames: 8, // Assuming 8 frames in the sprite sheet
+      framesPerRow: 8,
+      animationDuration: growthTime * frameSequenceLength,
+      loop: false // Don't loop, cactus stops growing at final stage
+    });
+  }
+
   private getRandomVariant(): CactusVariant {
     const variants = [CactusVariant.VARIANT_1, CactusVariant.VARIANT_2, CactusVariant.VARIANT_3];
-    return variants[Math.floor(Math.random() * variants.length)];
+    return variants[Math.floor(Math.random() * variants.length)] ?? CactusVariant.VARIANT_1;
   }
 
   private getFrameSequence(variant: CactusVariant): number[] {

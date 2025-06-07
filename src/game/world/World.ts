@@ -32,7 +32,29 @@ export class World {
     }
 
     public update(deltaTime: number): void {
-        // No-op for now
+        this.updateDirtRegeneration(deltaTime);
+    }
+
+    private updateDirtRegeneration(deltaTime: number): void {
+        const DIRT_TO_GRASS_TIME = 30000; // 30 seconds in milliseconds
+
+        // Check tiles in visible area for dirt regeneration
+        for (const [tileKey, tile] of this.visibleTileCache) {
+            if (tile.value === 'DIRT') {
+                // Initialize dirt timer if not set
+                tile.dirtTimer ??= 0;
+
+                tile.dirtTimer += deltaTime * 1000; // Convert to milliseconds
+
+                if (tile.dirtTimer >= DIRT_TO_GRASS_TIME) {
+                    // Convert back to grass
+                    tile.value = 'GRASS';
+                    tile.dirtTimer = undefined;
+                    this.invalidateCache();
+                    console.log(`DIRT tile regenerated to GRASS at (${tile.x}, ${tile.y})`);
+                }
+            }
+        }
     }
 
     public render(ctx: CanvasRenderingContext2D, camera: Camera): void {
@@ -107,9 +129,10 @@ export class World {
             case 'DEEP_WATER': return '#00008B';
             case 'SHALLOW_WATER': return '#4169E1';
             case 'RIVER': return '#1E90FF';
-            case 'YELLOW_SAND': return '#F4A460';
+            case 'SAND': return '#F4A460';
             case 'GRASS': return '#90EE90';
-            case 'MUD': return '#8B4513';
+            case 'MUD': return '#8B4513'; // Dark brown
+            case 'DIRT': return '#CD853F'; // Light brown (Peru color)
             case 'CLAY': return '#CD7F32';
             case 'FOREST': return '#006400';
             case 'GRAVEL': return '#B8B8B8';
