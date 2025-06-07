@@ -47,6 +47,8 @@ jobs:
 
       - name: Build
         run: pnpm run export
+        env:
+          SKIP_ENV_VALIDATION: true
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
