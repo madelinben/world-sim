@@ -2,6 +2,7 @@ import { createNoise2D } from 'simplex-noise';
 import alea from 'alea';
 import { Tree, TreeGrowthStage } from '../entities/structure/Tree';
 import { Cactus, CactusVariant } from '../entities/structure/Cactus';
+import { VillageGenerator, type VillageStructure } from './VillageGenerator';
 
 export type TileType =
   | 'DEEP_WATER'
@@ -34,6 +35,7 @@ export interface Tile {
   cactus?: Cactus[];
   spriteId?: string;
   dirtTimer?: number; // For DIRT -> GRASS regeneration
+  villageStructures?: VillageStructure[]; // Village structures on this tile
 }
 
 export class WorldGenerator {
@@ -42,6 +44,8 @@ export class WorldGenerator {
   private humidityNoise: (x: number, y: number) => number;
   private riverNoise: (x: number, y: number) => number;
   private riverPathNoise: (x: number, y: number) => number;
+  private villageGenerator: VillageGenerator;
+  private villageStructures = new Map<string, VillageStructure>();
   public static TILE_SIZE = 16;
   public readonly seed: string;
 
@@ -53,10 +57,14 @@ export class WorldGenerator {
     this.humidityNoise = createNoise2D(prng);
     this.riverNoise = createNoise2D(prng);
     this.riverPathNoise = createNoise2D(prng);
+    this.villageGenerator = new VillageGenerator(this.seed);
   }
 
   generateChunk(chunkX: number, chunkY: number, chunkSize: number): Tile[][] {
     const tiles: Tile[][] = [];
+    const allChunkStructures: VillageStructure[] = [];
+
+    // First pass: generate all tiles and collect all village structures
     for (let y = 0; y < chunkSize; y++) {
       const row: Tile[] = [];
       for (let x = 0; x < chunkSize; x++) {
@@ -92,15 +100,29 @@ export class WorldGenerator {
         }
 
         // Add sprite information (only if sprite exists)
-        const spriteId = this.getSpriteIdForTile(value);
+        const spriteId = this.getSpriteIdForTile(value, worldX, worldY);
         if (spriteId) {
           tile.spriteId = spriteId;
+        }
+
+        // Generate village structures for this tile
+        const structures = this.villageGenerator.generateVillageStructures(
+          worldX,
+          worldY,
+          value,
+          this.villageStructures
+        );
+
+        if (structures.length > 0) {
+          tile.villageStructures = structures;
+          allChunkStructures.push(...structures);
         }
 
         row.push(tile);
       }
       tiles.push(row);
     }
+
     return tiles;
   }
 
@@ -297,7 +319,7 @@ export class WorldGenerator {
     }
 
     // Add sprite information (only if sprite exists)
-    const spriteId = this.getSpriteIdForTile(value);
+    const spriteId = this.getSpriteIdForTile(value, x, y);
     if (spriteId) {
       tile.spriteId = spriteId;
     }
@@ -378,8 +400,35 @@ export class WorldGenerator {
     return cactus;
   }
 
-      public getSpriteIdForTile(tileType: TileType): string | undefined {
-    // No tile sprites - only Trees and Cactus render sprites via AnimationSystem
-    return undefined;
+      public getSpriteIdForTile(tileType: TileType, x?: number, y?: number): string | undefined {
+    switch (tileType) {
+      case 'GRASS':
+        // Use tile coordinates to get consistent variant for each tile position
+        if (x !== undefined && y !== undefined) {
+          const variant = Math.abs(x * 31 + y * 17) % 6; // 6 grass variants (0-5)
+
+          // Map variants to actual sprite locations in 3x2 grid:
+          // Row 0: variants 0,1,2 -> #0,0, #1,0, #2,0
+          // Row 1: variants 3,4,5 -> #0,1, #1,1, #2,1
+          const spriteX = variant % 3;
+          const spriteY = Math.floor(variant / 3);
+          const spriteId = `/sprites/Ground/TexturedGrass.png#${spriteX},${spriteY}`;
+
+          return spriteId;
+        }
+        return `/sprites/Ground/TexturedGrass.png#0,0`;
+
+      case 'SAND':
+        return `/sprites/Ground/Shore.png#0,0`;
+
+      case 'SHALLOW_WATER':
+        return `/sprites/Ground/Shore.png#2,0`;
+
+      case 'DEEP_WATER':
+        return `/sprites/Ground/Shore.png#4,0`;
+
+      default:
+        return undefined; // Use tile colors for other types
+    }
   }
 }

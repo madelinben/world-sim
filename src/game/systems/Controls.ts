@@ -32,6 +32,9 @@ export class Controls {
     public lastMouse: { x: number; y: number } | null = null;
     public dragDelta: { x: number; y: number } = { x: 0, y: 0 };
 
+    // Mouse click state
+    public mouseClick: { x: number; y: number } | null = null;
+
     constructor(private canvas?: HTMLCanvasElement) {
         this.keys = new Set();
         this.keyState = {};
@@ -84,6 +87,17 @@ export class Controls {
             }
         });
         canvas.addEventListener('mouseup', (e) => {
+            // Only register click if we weren't dragging much
+            if (this.dragStart) {
+                const dragDistance = Math.sqrt(
+                    Math.pow(e.clientX - this.dragStart.x, 2) +
+                    Math.pow(e.clientY - this.dragStart.y, 2)
+                );
+                if (dragDistance < 5) { // Less than 5 pixels = click
+                    this.mouseClick = { x: e.clientX, y: e.clientY };
+                }
+            }
+
             this.isDragging = false;
             this.dragStart = null;
             this.lastMouse = null;
@@ -99,6 +113,12 @@ export class Controls {
         // Reset justPressed after each frame
         this.justPressed = {};
         // Reset drag delta after each frame (no logging)
+    }
+
+    public getMouseClick(): { x: number; y: number } | null {
+        const click = this.mouseClick;
+        this.mouseClick = null; // Reset after reading
+        return click;
     }
 
     public isKeyPressed(key: string): boolean {

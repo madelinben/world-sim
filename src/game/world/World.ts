@@ -3,6 +3,8 @@ import { Chunk } from './Chunk';
 import type { Camera } from '../systems/Camera';
 import { SpriteGenerator } from '../ui/SpriteGenerator';
 import type { AnimationSystem } from '../systems/AnimationSystem';
+import type { Position } from '../engine/types';
+import type { InventoryItem } from '../entities/inventory/Inventory';
 
 export class World {
     public readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
@@ -31,8 +33,9 @@ export class World {
         this.cacheValid = false;
     }
 
-    public update(deltaTime: number): void {
+    public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
         this.updateDirtRegeneration(deltaTime);
+        this.updateVillageStructures(deltaTime, playerPosition, playerInventory);
     }
 
     private updateDirtRegeneration(deltaTime: number): void {
@@ -52,6 +55,28 @@ export class World {
                     tile.dirtTimer = undefined;
                     this.invalidateCache();
                     console.log(`DIRT tile regenerated to GRASS at (${tile.x}, ${tile.y})`);
+                }
+            }
+        }
+    }
+
+        private updateVillageStructures(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
+        // Update POI and NPC animations for visible tiles
+        for (const [tileKey, tile] of this.visibleTileCache) {
+            if (tile.villageStructures) {
+                for (const structure of tile.villageStructures) {
+                    // Update POI animations (windmills, etc.)
+                    if (structure.poi) {
+                        structure.poi.update(deltaTime);
+                    }
+
+                    // Update NPC animations and AI (animals, etc.)
+                    if (structure.npc && !structure.npc.isDead()) {
+                        // Use provided player position and inventory, or defaults
+                        const pos = playerPosition ?? { x: 0, y: 0 };
+                        const inventory = playerInventory ?? [];
+                        structure.npc.update(deltaTime, pos, inventory);
+                    }
                 }
             }
         }
@@ -120,6 +145,23 @@ export class World {
         if (tile.spriteId) {
             this.spriteGenerator.renderSprite(ctx, tile.spriteId, tileX + 1, tileY + 1);
         }
+
+        // Render village structures if present
+        if (tile.villageStructures) {
+            for (const structure of tile.villageStructures) {
+                // Render POIs first (buildings, etc.)
+                if (structure.poi) {
+                    structure.poi.render(ctx, tileX + 1, tileY + 1);
+                }
+            }
+
+            // Render NPCs on top of POIs
+            for (const structure of tile.villageStructures) {
+                if (structure.npc && !structure.npc.isDead()) {
+                    structure.npc.render(ctx, tileX + 1, tileY + 1);
+                }
+            }
+        }
     }
 
 
@@ -156,10 +198,11 @@ export class World {
             chunk = new Chunk(chunkX, chunkY, World.CHUNK_SIZE, tiles, this.generator);
             this.chunks.set(key, chunk);
 
-            // Register trees and cactus with animation system
+            // Register trees, cactus, and village structures with animation system
             if (this.animationSystem) {
                 this.registerChunkTrees(chunk, tiles);
                 this.registerChunkCactus(chunk, tiles);
+                this.registerChunkVillageStructures(chunk, tiles);
             }
         }
         return chunk;
@@ -189,6 +232,30 @@ export class World {
                     for (const cactusEntity of tile.cactus) {
                         const tileKey = `${tile.x},${tile.y}`;
                         this.animationSystem.addCactus(tileKey, cactusEntity);
+                    }
+                }
+            }
+        }
+    }
+
+    private registerChunkVillageStructures(chunk: Chunk, tiles: Tile[][]): void {
+        if (!this.animationSystem) return;
+
+        for (const row of tiles) {
+            for (const tile of row) {
+                if (tile.villageStructures) {
+                    for (const structure of tile.villageStructures) {
+                        if (structure.npc) {
+                            // Register NPCs with animation system for movement and rendering
+                            const tileKey = `${tile.x},${tile.y}`;
+                            // Note: This would require adding NPC support to AnimationSystem
+                            // For now, we'll handle NPC rendering in the POI render method
+                            console.log(`Village NPC ${structure.type} registered at ${tileKey}`);
+                        }
+                        if (structure.poi) {
+                            // POIs handle their own animation updates
+                            console.log(`Village POI ${structure.type} registered at ${tile.x},${tile.y}`);
+                        }
                     }
                 }
             }

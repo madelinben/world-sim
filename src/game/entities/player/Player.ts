@@ -72,6 +72,19 @@ export class Player {
     return this.inventory.getSelectedItem();
   }
 
+  public getSelectedSlot(): number {
+    return this.inventory.getSelectedSlot();
+  }
+
+  public getInventoryItems() {
+    // Return array of 9 items (null for empty slots)
+    const items = [];
+    for (let i = 0; i < 9; i++) {
+      items.push(this.inventory.getItem(i));
+    }
+    return items;
+  }
+
   public openInventory(): void {
     console.log('=== PLAYER INVENTORY ===');
     this.inventory.logInventoryState();

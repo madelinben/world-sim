@@ -110,6 +110,7 @@ export class SpriteGenerator {
     private processSprite(spritePath: string, image: HTMLImageElement): void {
         const tilesX = Math.floor(image.width / SpriteGenerator.TILE_SIZE);
         const tilesY = Math.floor(image.height / SpriteGenerator.TILE_SIZE);
+
         for (let y = 0; y < tilesY; y++) {
             for (let x = 0; x < tilesX; x++) {
                 const spriteId = `${spritePath}#${x},${y}`;

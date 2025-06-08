@@ -5,6 +5,7 @@ import { Player } from '../engine/Game';
 import { type World } from '../world/World';
 import type { Tree } from '../entities/structure/Tree';
 import type { Cactus } from '../entities/structure/Cactus';
+import type { VillageStructure } from '../world/VillageGenerator';
 
 export class Movement {
     private readonly TILE_SIZE = WorldGenerator.TILE_SIZE; // Use unified tile size
@@ -26,7 +27,7 @@ export class Movement {
         this.onDirectionChangeCallback = callback;
     }
 
-    private canMoveToTile(tile: { value: string; trees?: Tree[]; cactus?: Cactus[] } | null): boolean {
+    private canMoveToTile(tile: { value: string; trees?: Tree[]; cactus?: Cactus[]; villageStructures?: VillageStructure[] } | null): boolean {
         if (!tile) return false;
 
         // Check for impassable tiles
@@ -46,6 +47,21 @@ export class Movement {
             if (hasLivingCactus) return false;
         }
 
+        // Check for village structures (POIs and NPCs)
+        if (tile.villageStructures && tile.villageStructures.length > 0) {
+            for (const structure of tile.villageStructures) {
+                // Check POI passability
+                if (structure.poi && !structure.poi.passable) {
+                    return false; // Impassable POI (like markets, windmills, chests)
+                }
+
+                // Check NPC passability - NPCs are impassable unless dead
+                if (structure.npc && !structure.npc.isDead()) {
+                    return false; // Living NPCs block movement
+                }
+            }
+        }
+
         return true;
     }
 
@@ -55,6 +71,10 @@ export class Movement {
 
     private canMoveFromSnow(): boolean {
         return Math.random() < 1/4; // 1 in 4 chance to move from snow
+    }
+
+    private canMoveFromShallowWater(): boolean {
+        return Math.random() < 1/3; // 1 in 3 chance to move from shallow water
     }
 
     public update(player: PlayerState, controls: Controls): void {
@@ -74,6 +94,11 @@ export class Movement {
 
         // Check if player is in SNOW and randomly prevent movement
         if (currentTile?.value === 'SNOW' && !this.canMoveFromSnow()) {
+            return;
+        }
+
+        // Check if player is in SHALLOW_WATER and randomly prevent movement
+        if (currentTile?.value === 'SHALLOW_WATER' && !this.canMoveFromShallowWater()) {
             return;
         }
 
@@ -107,7 +132,26 @@ export class Movement {
                 player.position = newPosition;
                 actuallyMoved = true;
             } else {
-                console.log(`Movement blocked - cannot move to ${targetTile?.value || 'UNKNOWN'} tile`);
+                let blockReason = `${targetTile?.value ?? 'UNKNOWN'} tile`;
+
+                // Add specific blocking reason
+                if (targetTile?.trees?.some(tree => tree.getHealth() > 0)) {
+                    blockReason += ' (blocked by tree)';
+                } else if (targetTile?.cactus?.some(cactus => cactus.getHealth() > 0)) {
+                    blockReason += ' (blocked by cactus)';
+                } else if (targetTile?.villageStructures) {
+                    const blockingStructures = targetTile.villageStructures.filter(s =>
+                        (s.poi && !s.poi.passable) || (s.npc && !s.npc.isDead())
+                    );
+                    if (blockingStructures.length > 0) {
+                        const structureTypes = blockingStructures.map(s =>
+                            s.poi ? s.poi.type : s.npc ? s.npc.type : 'unknown'
+                        ).join(', ');
+                        blockReason += ` (blocked by ${structureTypes})`;
+                    }
+                }
+
+                console.log(`Movement blocked - cannot move to ${blockReason}`);
             }
 
             // Always trigger direction change callback when a movement was attempted
@@ -124,7 +168,7 @@ export class Movement {
 
             // Log current tile with structure info
             const currentTile = this.world.getTile(player.position.x / this.TILE_SIZE, player.position.y / this.TILE_SIZE);
-            let tileInfo = currentTile?.value || 'UNKNOWN';
+            let tileInfo = currentTile?.value ?? 'UNKNOWN';
             if (currentTile?.trees && currentTile.trees.length > 0) {
                 const tree = currentTile.trees[0];
                 tileInfo += ` (Tree: ${tree?.getHealth()}/${tree?.getMaxHealth()} HP)`;
@@ -132,6 +176,12 @@ export class Movement {
             if (currentTile?.cactus && currentTile.cactus.length > 0) {
                 const cactus = currentTile.cactus[0];
                 tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP)`;
+            }
+            if (currentTile?.villageStructures && currentTile.villageStructures.length > 0) {
+                const structures = currentTile.villageStructures.map(s =>
+                    s.poi ? s.poi.type : s.npc ? `${s.npc.type} NPC` : 'unknown'
+                ).join(', ');
+                tileInfo += ` (Structures: ${structures})`;
             }
             console.log('Current tile:', tileInfo);
 

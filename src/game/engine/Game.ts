@@ -7,6 +7,8 @@ import { Camera } from '~/game/systems/Camera';
 import { WorldGenerator } from '~/game/world/WorldGenerator';
 import { AnimationSystem } from '~/game/systems/AnimationSystem';
 import { Player as PlayerEntity } from '~/game/entities/player/Player';
+import { InventoryUI } from '~/game/ui/InventoryUI';
+import type { InventoryItem } from '~/game/entities/inventory/Inventory';
 import type { Tree } from '~/game/entities/structure/Tree';
 import type { Cactus } from '~/game/entities/structure/Cactus';
 
@@ -34,6 +36,7 @@ export class Game {
     private movement!: Movement;
     private world!: World;
     private animationSystem!: AnimationSystem;
+    private inventoryUI!: InventoryUI;
     private canvas: HTMLCanvasElement;
     private lastPlayerPos = { x: 0, y: 0 };
     private lastNPCs = '';
@@ -74,6 +77,7 @@ export class Game {
         this.world = new World(new WorldGenerator(seed));
         this.movement = new Movement(this.world);
         this.animationSystem = new AnimationSystem();
+        this.inventoryUI = new InventoryUI();
 
         // Connect world with animation system
         this.world.setAnimationSystem(this.animationSystem);
@@ -104,6 +108,7 @@ export class Game {
         private update(deltaTime: number, forceUpdate = false): void {
         // Handle new input actions BEFORE resetting justPressed state
         this.handlePlayerActions();
+        this.handleMouseInput();
 
         this.controls.update();
 
@@ -146,7 +151,7 @@ export class Game {
                 changed = true;
             }
 
-            this.world.update(deltaTime);
+            this.world.update(deltaTime, player.position, this.player.getInventoryItems().filter(item => item !== null));
         }
 
         // Always update animations for smooth tree growth
@@ -165,6 +170,14 @@ export class Game {
         // Render player behind structures/sprites
         this.renderPlayer(ctx);
         this.animationSystem.render(ctx, this.camera);
+
+        // Render inventory UI on top of everything
+        this.inventoryUI.render(
+            ctx,
+            this.camera,
+            this.player.getInventoryItems(),
+            this.player.getSelectedSlot()
+        );
     }
 
     private renderPlayer(ctx: CanvasRenderingContext2D): void {
@@ -202,6 +215,20 @@ export class Game {
         }
 
         // Direction tracking will be handled by the movement system after successful movement
+    }
+
+    private handleMouseInput(): void {
+        const mouseClick = this.controls.getMouseClick();
+        if (mouseClick) {
+            // Check if click is in inventory area
+            if (this.inventoryUI.isPointInInventoryArea(mouseClick.x, mouseClick.y, this.canvas.width, this.canvas.height)) {
+                const slotIndex = this.inventoryUI.getSlotAt(mouseClick.x, mouseClick.y, this.canvas.width);
+                if (slotIndex !== null) {
+                    this.player.selectInventorySlot(slotIndex);
+                    console.log(`Mouse clicked inventory slot ${slotIndex + 1}`);
+                }
+            }
+        }
     }
 
         private handleAttack(): void {
