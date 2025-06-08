@@ -82,7 +82,7 @@ export class WorldGenerator {
       const hasStructures = (tile.villageStructures?.length ?? 0) > 0;
       const hasLivingTrees = tile.trees?.some(tree => tree.getHealth() > 0) ?? false;
       const hasLivingCactus = tile.cactus?.some(cactus => cactus.getHealth() > 0) ?? false;
-      const isImpassableTerrain = tile.value === 'DEEP_WATER' || tile.value === 'STONE';
+              const isImpassableTerrain = tile.value === 'DEEP_WATER' || tile.value === 'SHALLOW_WATER' || tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW';
 
       const isBlocked = isImpassableTerrain || hasLivingTrees || hasLivingCactus || hasStructures;
 
@@ -315,18 +315,18 @@ export class WorldGenerator {
 
     // For land tiles, combine temperature and humidity to determine biome
     if (temperature < 0.2) {
-      // Cold regions
-      if (height > 0.8) return 'SNOW';
+      // Cold regions - increased snow coverage
+      if (height > 0.75) return 'SNOW'; // Lowered from 0.8 to 0.75
       if (height > 0.7) return 'STONE';
       if (height > 0.65) return 'COBBLESTONE';
       if (humidity > 0.6) return 'FOREST';
       if (humidity > 0.3) return 'GRASS';
       return 'STONE'; // Changed from GRAVEL to STONE
     } else if (temperature < 0.4) {
-      // Cool regions
-      if (height > 0.7) return 'SNOW';
-      if (height > 0.65) return 'STONE';
-      if (height > 0.6) return 'COBBLESTONE';
+      // Cool regions - increased snow coverage
+      if (height > 0.65) return 'SNOW'; // Lowered from 0.7 to 0.65
+      if (height > 0.6) return 'STONE'; // Lowered from 0.65 to 0.6
+      if (height > 0.55) return 'COBBLESTONE'; // Lowered from 0.6 to 0.55
       if (humidity > 0.7) return 'FOREST';
       if (humidity > 0.4) return 'GRASS';
       if (humidity > 0.2) return 'SAND'; // Added sand for low humidity areas
@@ -481,6 +481,17 @@ export class WorldGenerator {
           const spriteY = Math.floor(variant / 3);
           const spriteId = `/sprites/Ground/TexturedGrass.png#${spriteX},${spriteY}`;
 
+          return spriteId;
+        }
+        return `/sprites/Ground/TexturedGrass.png#0,0`;
+
+      case 'FOREST':
+        // Use textured grass sprites for forest background
+        if (x !== undefined && y !== undefined) {
+          const variant = Math.abs(x * 31 + y * 17) % 6; // 6 grass variants (0-5)
+          const spriteX = variant % 3;
+          const spriteY = Math.floor(variant / 3);
+          const spriteId = `/sprites/Ground/TexturedGrass.png#${spriteX},${spriteY}`;
           return spriteId;
         }
         return `/sprites/Ground/TexturedGrass.png#0,0`;

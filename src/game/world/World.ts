@@ -7,6 +7,7 @@ import type { Position } from '../engine/types';
 import type { InventoryItem } from '../entities/inventory/Inventory';
 import { NPC } from '../entities/npc/NPC';
 import type { VillageStructure } from './VillageGenerator';
+import { type POI } from '../entities/poi/POI';
 
 export class World {
     public readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
@@ -175,10 +176,7 @@ export class World {
             }
         }
 
-        // Log NPCs only occasionally to avoid spam
-        if (allNPCs.length > 0 && Math.random() < 0.01) { // 1% chance to log
-            console.log(`[DEBUG] Found ${allNPCs.length} total NPCs, ${npcsToUpdate.length} NPCs to update within ${viewRadiusInTiles} tiles of player at (${Math.round(playerPosition.x/16)},${Math.round(playerPosition.y/16)})`);
-        }
+
 
         // Collect village buildings from visible tiles
         for (const [tileKey, tile] of this.visibleTileCache) {
@@ -232,14 +230,7 @@ export class World {
             }
         }
 
-        // Debug log movement intentions occasionally
-        if (this.movementIntentions.size > 0 && Math.random() < 0.02) { // 2% chance to log
-            console.log(`[MOVEMENT INTENTIONS] Collected ${this.movementIntentions.size} intentions:`,
-                Array.from(this.movementIntentions.entries()).map(([key, npc]) =>
-                    `${npc.type}@(${Math.floor(npc.position.x/16)},${Math.floor(npc.position.y/16)}) → ${key}`
-                ).join(', ')
-            );
-        }
+
 
         // Second phase: Update NPCs with movement intentions registered
         for (const npcData of npcsToUpdate) {
@@ -278,7 +269,6 @@ export class World {
 
             if (oldTileX !== newTileX || oldTileY !== newTileY) {
                 // NPC moved to a different tile, update tile occupancy
-                console.log(`NPC ${npc.type} moving from tile (${oldTileX},${oldTileY}) to (${newTileX},${newTileY})`);
                 this.moveNPCBetweenTiles(structure, oldTileX, oldTileY, newTileX, newTileY);
             }
 
@@ -500,14 +490,58 @@ export class World {
         const chunkY = Math.floor(y / World.CHUNK_SIZE);
         const localX = ((x % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
         const localY = ((y % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
         const chunk = this.getOrCreateChunk(chunkX, chunkY);
-        let tile = chunk.getTile(localX, localY);
+        const tile = chunk.getTile(localX, localY);
+
         if (!tile) {
             // Should not happen, but fallback to generator
-            tile = this.generator.generateTile(x, y);
-            chunk.setTile(localX, localY, tile);
+            const generatedTile = this.generator.generateTile(x, y);
+            chunk.setTile(localX, localY, generatedTile);
+            return generatedTile;
         }
+
         return tile;
+    }
+
+    public getPOIAt(tileX: number, tileY: number): POI | null {
+        const tile = this.getTile(tileX, tileY);
+        if (tile?.villageStructures) {
+            for (const structure of tile.villageStructures) {
+                if (structure.poi) {
+                    return structure.poi;
+                }
+            }
+        }
+        return null;
+    }
+
+    public getNPCAt(tileX: number, tileY: number): NPC | null {
+        const tile = this.getTile(tileX, tileY);
+        if (tile?.villageStructures) {
+            for (const structure of tile.villageStructures) {
+                if (structure.npc && !structure.npc.isDead()) {
+                    return structure.npc;
+                }
+            }
+        }
+        return null;
+    }
+
+    public removeDeadNPCAt(tileX: number, tileY: number): { type: string; quantity: number }[] {
+        const chunkX = Math.floor(tileX / World.CHUNK_SIZE);
+        const chunkY = Math.floor(tileY / World.CHUNK_SIZE);
+        const chunk = this.getOrCreateChunk(chunkX, chunkY);
+
+        const localX = ((tileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const localY = ((tileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+        const deadNPCStructure = chunk.removeDeadNPC(localX, localY);
+        if (deadNPCStructure?.npc) {
+            this.invalidateCache();
+            return deadNPCStructure.npc.getDropItems();
+        }
+        return [];
     }
 
     setTile(x: number, y: number, newValue: TileType): void {
@@ -515,6 +549,7 @@ export class World {
         const chunkY = Math.floor(y / World.CHUNK_SIZE);
         const localX = ((x % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
         const localY = ((y % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
         const chunk = this.getOrCreateChunk(chunkX, chunkY);
         const tile = chunk.getTile(localX, localY);
         if (tile) {
@@ -522,8 +557,9 @@ export class World {
             tile.value = newValue;
             tile.interacted = true;
             chunk.setTile(localX, localY, tile);
-            this.invalidateCache(); // Invalidate cache when tiles change
         }
+
+        this.invalidateCache();
     }
 
     setPlayerPosition(oldX: number, oldY: number, newX: number, newY: number): void {
@@ -571,7 +607,7 @@ export class World {
         if (!tile) return true; // Treat invalid tiles as occupied
 
         // Check for impassable terrain
-        if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') {
+        if (tile.value === 'DEEP_WATER' || tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW' || tile.value === 'SHALLOW_WATER') {
             return true;
         }
 
@@ -649,7 +685,6 @@ export class World {
         const intendedNPCForOccupyingTile = this.movementIntentions.get(`${tileX},${tileY}`);
 
         if (intendedNPCForMovingTile === occupyingNPC && intendedNPCForOccupyingTile === movingNPC) {
-            console.log(`[SPECULATIVE] Allowing bidirectional swap between ${movingNPC.type} at (${movingNPCCurrentX},${movingNPCCurrentY}) and ${occupyingNPC.type} at (${tileX},${tileY})`);
             return true; // Allow the swap
         }
 
@@ -658,7 +693,6 @@ export class World {
         for (const [intentionTileKey, intentionNPC] of this.movementIntentions) {
             if (intentionNPC === occupyingNPC && intentionTileKey !== occupyingNPCCurrentKey) {
                 occupyingNPCWantsToMove = true;
-                console.log(`[SPECULATIVE] ${occupyingNPC.type} at (${tileX},${tileY}) wants to move to ${intentionTileKey}, allowing ${movingNPC.type} to take their place`);
                 break;
             }
         }
@@ -667,11 +701,7 @@ export class World {
             return true;
         }
 
-        // Additional debug logging
-        if (Math.random() < 0.01) { // Only log occasionally to avoid spam
-            console.log(`[SPECULATIVE] Cannot resolve: ${movingNPC.type} wants (${tileX},${tileY}) occupied by ${occupyingNPC.type}, no movement intention found`);
-            console.log(`[DEBUG] Movement intentions:`, Array.from(this.movementIntentions.entries()).map(([key, npc]) => `${key}:${npc.type}`));
-        }
+
 
         return false; // Cannot speculative move
     }
@@ -728,10 +758,8 @@ export class World {
                 // Register in chunk's NPC tracking system
                 chunk.getAllNPCs().set(`${localX},${localY}`, offspringStructure);
 
-                console.log(`🐣 [BREEDING SUCCESS] New ${request.offspringType} born at tile (${offspringTileX},${offspringTileY})! Parents: ${npc.type} and ${request.partner.type}`);
-            } else {
-                console.log(`🚫 [BREEDING FAILED] No space available for offspring at tile (${offspringTileX},${offspringTileY})`);
-            }
+
+                          }
         } catch (error) {
             console.error(`❌ [BREEDING ERROR] Failed to create offspring:`, error);
         }

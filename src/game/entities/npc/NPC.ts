@@ -1,6 +1,6 @@
 import type { Position } from '../../engine/types';
 import type { InventoryItem } from '../inventory/Inventory';
-import { ASSET_MAP, type AssetMapping, getAssetByName } from '../../assets/AssetMap';
+import { type AssetMapping, getAssetByName } from '../../assets/AssetMap';
 import { getAssetPath } from '../../utils/assetPath';
 
 type Direction = 'up' | 'down' | 'left' | 'right';
@@ -45,7 +45,7 @@ export class NPC {
 
   // Tile-based movement properties (like player)
   private moveCooldown = 0;
-  private readonly moveDelay = 600; // 0.6 seconds between moves (increased frequency)
+  private readonly moveDelay = 1200; // 1.2 seconds between moves (slowed down)
 
   private currentFrame = 0;
   private lastFrameTime = 0;
@@ -181,17 +181,14 @@ export class NPC {
 
       // Only update direction and move if we're actually changing tiles
       if (currentTileX !== newTileX || currentTileY !== newTileY) {
-        // Update direction based on movement
+      // Update direction based on movement
         this.updateDirectionFromMovement(newTileX - currentTileX, newTileY - currentTileY);
 
         // Move to new tile
         this.position = { x: newTileX * 16, y: newTileY * 16 };
         this.lastMovementTime = Date.now(); // Track successful movement
 
-        // Only log movement if it's a significant change (reduces spam)
-        if (Math.random() < 0.1) { // 10% chance to log
-          console.log(`[NPC ${this.type}] Moved from (${currentTileX},${currentTileY}) to (${newTileX},${newTileY})`);
-        }
+
       }
 
       // Always reset movement cooldown when we attempt a valid move
@@ -210,7 +207,6 @@ export class NPC {
           const forceTileY = Math.floor(forceMove.y / 16);
           this.position = { x: forceTileX * 16, y: forceTileY * 16 };
           this.lastMovementTime = now;
-          console.log(`[NPC ${this.type}] Force moved after being idle for too long`);
         }
       }
     }
@@ -426,7 +422,7 @@ export class NPC {
           // Attack the NPC
           npc.takeDamage(10);
           this.lastAttackTime = now;
-          console.log(`${this.type} attacked ${npc.type} for 10 damage`);
+
           break;
         }
       }
@@ -578,8 +574,8 @@ export class NPC {
   private getDefaultDropItems(): { type: string; quantity: number }[] {
     switch (this.type) {
       case 'chicken': return [{ type: 'chicken_meat', quantity: 1 }];
-      case 'pig': return [{ type: 'pork', quantity: 2 }];
-      case 'sheep': return [{ type: 'wool', quantity: 1 }, { type: 'mutton', quantity: 1 }];
+      case 'pig': return [{ type: 'pork', quantity: 3 }];
+      case 'sheep': return [{ type: 'mutton', quantity: 1 }, { type: 'wool', quantity: 3 }];
       case 'trader': return [];
       case 'orc':
       case 'skeleton':

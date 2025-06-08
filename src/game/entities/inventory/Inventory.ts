@@ -150,6 +150,10 @@ export class Inventory {
       wood: 64,
       cactus: 64,
       stone: 64,
+      chicken_meat: 64,
+      pork: 64,
+      mutton: 64,
+      wool: 64,
       // Add more item types as needed
     };
 

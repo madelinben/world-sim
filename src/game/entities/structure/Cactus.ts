@@ -55,8 +55,8 @@ export class Cactus extends Structure {
       imagePath: '/sprites/Nature/Cactus.png',
       frameWidth: 16,
       frameHeight: 16,
-      totalFrames: 8, // Assuming 8 frames in the sprite sheet
-      framesPerRow: 8,
+      totalFrames: 8, // 8 frames in the sprite sheet (2 rows x 4 columns)
+      framesPerRow: 4, // 4 frames per row, not 8
       animationDuration: growthTime * frameSequenceLength,
       loop: false // Don't loop, cactus stops growing at final stage
     });
@@ -145,5 +145,13 @@ export class Cactus extends Structure {
       this.isGrowthComplete = stage === this.frameSequence.length - 1;
       this.timeSinceLastGrowth = 0;
     }
+  }
+
+  public isSpriteLoaded(): boolean {
+    return this.sprite.isImageLoaded();
+  }
+
+  public getCurrentFrame(): number {
+    return this.sprite.getCurrentFrame();
   }
 }

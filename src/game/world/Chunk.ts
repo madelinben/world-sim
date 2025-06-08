@@ -135,7 +135,6 @@ export class Chunk {
     // Enhanced spacing check for NPCs to prevent clustering
     if (npcStructure.npc) {
       if (!this.hasAdequateNPCSpacing(localX, localY)) {
-        console.log(`NPC spacing check failed at chunk tile (${localX},${localY})`);
         return false;
       }
     }
@@ -248,7 +247,7 @@ export class Chunk {
     }
 
     // Check if new tile is available (excluding the NPC we're moving)
-    const isImpassableTerrain = newTile.value === 'DEEP_WATER' || newTile.value === 'STONE';
+    const isImpassableTerrain = newTile.value === 'DEEP_WATER' || newTile.value === 'STONE' || newTile.value === 'COBBLESTONE' || newTile.value === 'SNOW' || newTile.value === 'SHALLOW_WATER';
     const hasLivingTrees = newTile.trees?.some(tree => tree.getHealth() > 0) ?? false;
     const hasLivingCactus = newTile.cactus?.some(cactus => cactus.getHealth() > 0) ?? false;
     const isNewTileBlocked = isImpassableTerrain || hasLivingTrees || hasLivingCactus;
@@ -285,7 +284,7 @@ export class Chunk {
     if (!tile) return true; // Treat invalid tiles as occupied
 
     // Check for impassable terrain
-    if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') {
+    if (tile.value === 'DEEP_WATER' || tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW' || tile.value === 'SHALLOW_WATER') {
       return true;
     }
 
@@ -323,6 +322,41 @@ export class Chunk {
 
   getAllNPCs(): Map<string, VillageStructure> {
     return this.entityData.npcStructures;
+  }
+
+  removeDeadNPC(localX: number, localY: number): VillageStructure | null {
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= this.size ||
+      localY >= this.size
+    ) {
+      return null;
+    }
+
+    const tileKey = `${localX},${localY}`;
+    const tile = this.getTile(localX, localY);
+
+    if (!tile) return null;
+
+    // Get the NPC structure
+    const npcStructure = this.entityData.npcStructures.get(tileKey);
+    if (!npcStructure?.npc?.isDead()) {
+      return null; // No dead NPC found
+    }
+
+    // Remove from chunk entity data
+    this.entityData.npcStructures.delete(tileKey);
+
+    // Remove from tile's village structures
+    if (tile.villageStructures) {
+      tile.villageStructures = tile.villageStructures.filter(structure => structure !== npcStructure);
+      if (tile.villageStructures.length === 0) {
+        delete tile.villageStructures;
+      }
+    }
+
+    return npcStructure;
   }
 
   hasModifications(): boolean {

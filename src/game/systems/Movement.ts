@@ -1,7 +1,6 @@
 import type { PlayerState } from '../engine/types';
 import type { Controls } from './Controls';
 import { WorldGenerator } from '../world/WorldGenerator';
-import { Player } from '../engine/Game';
 import { type World } from '../world/World';
 import type { Tree } from '../entities/structure/Tree';
 import type { Cactus } from '../entities/structure/Cactus';
@@ -31,7 +30,7 @@ export class Movement {
         if (!tile) return false;
 
         // Check for impassable tiles
-        if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') return false;
+        if (tile.value === 'DEEP_WATER' || tile.value === 'SHALLOW_WATER' || tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW') return false;
 
         // Check for trees (impassable when present and alive, but passable when cut down)
         if (tile.trees && tile.trees.length > 0) {
@@ -69,13 +68,7 @@ export class Movement {
         return Math.random() < 1/3; // 1 in 3 chance to move
     }
 
-    private canMoveFromSnow(): boolean {
-        return Math.random() < 1/4; // 1 in 4 chance to move from snow
-    }
 
-    private canMoveFromShallowWater(): boolean {
-        return Math.random() < 1/3; // 1 in 3 chance to move from shallow water
-    }
 
     public update(player: PlayerState, controls: Controls): void {
         // Handle movement cooldown
@@ -92,15 +85,8 @@ export class Movement {
             return;
         }
 
-        // Check if player is in SNOW and randomly prevent movement
-        if (currentTile?.value === 'SNOW' && !this.canMoveFromSnow()) {
-            return;
-        }
-
-        // Check if player is in SHALLOW_WATER and randomly prevent movement
-        if (currentTile?.value === 'SHALLOW_WATER' && !this.canMoveFromShallowWater()) {
-            return;
-        }
+        // SNOW and SHALLOW_WATER are now completely impassable, so players should never be on these tiles
+        // Keeping these checks for legacy support but they should not trigger in normal gameplay
 
         let attemptedMove = false;
         let actuallyMoved = false;
@@ -141,7 +127,7 @@ export class Movement {
                     blockReason += ' (blocked by cactus)';
                 } else if (targetTile?.villageStructures) {
                     const blockingStructures = targetTile.villageStructures.filter(s =>
-                        (s.poi && !s.poi.passable) || (s.npc && !s.npc.isDead())
+                        (s.poi && !s.poi.passable) ?? (s.npc && !s.npc.isDead())
                     );
                     if (blockingStructures.length > 0) {
                         const structureTypes = blockingStructures.map(s =>

@@ -104,7 +104,6 @@ export class SpriteGenerator {
                 console.error(`Failed to load sprite: ${spritePath}`, error);
             }
         }
-        console.log('Loaded sprites:', Array.from(this.sprites.keys()));
     }
 
     private processSprite(spritePath: string, image: HTMLImageElement): void {

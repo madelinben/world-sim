@@ -1,4 +1,4 @@
-# World Simulator - Game Rules & Mechanics (Updated)
+# World Simulator - Game Rules & Mechanics (Updated December 2024)
 
 ## 🌍 **World Generation**
 
@@ -21,6 +21,7 @@ Each tile consists of three distinct visual layers rendered in order:
    - 16x16 pixel sprites from sprite sheets (TexturedGrass.png, Shore.png)
    - Optional - not all tile types have background sprites
    - GRASS tiles have 6 variants mapped deterministically by coordinates
+   - FOREST tiles also use textured grass variants for enhanced visual appeal
 
 3. **Occupied Entity Layer** (Top)
    - Interactive game objects (NPCs, POIs, structures)
@@ -32,35 +33,43 @@ Each tile consists of three distinct visual layers rendered in order:
 ```typescript
 interface Tile {
   // Base tile properties
+  x: number;
+  y: number;
   value: TileType;           // GRASS, WATER, etc. (determines base color)
+  prevValue?: TileType;      // For player movement tracking
+  interacted?: boolean;      // For player interaction state
+  height: number;            // Elevation for world generation
+  temperature: number;       // Climate data
+  humidity: number;          // Climate data
+  riverValue?: number;       // Water flow data
+  flowDirection?: number;    // Water flow direction
   spriteId?: string;         // Background sprite path (e.g., TexturedGrass.png#1,0)
+  dirtTimer?: number;        // For DIRT -> GRASS regeneration
 
   // Occupied entities (only one type per tile)
   trees?: Tree[];            // Animated tree structures
   cactus?: Cactus[];         // Animated cactus structures
-  villageStructures?: {      // Village POIs and NPCs
-    poi?: POI;               // Buildings, chests, etc.
-    npc?: NPC;               // Animals, traders, monsters
-  }[];
+  villageStructures?: VillageStructure[]; // Village POIs and NPCs
 }
 ```
 
 ### **Tile Types**
-| Tile Type | Description | Movement | Color |
-|-----------|-------------|----------|-------|
-| `DEEP_WATER` | Deep ocean/lakes | ❌ Impassable | Dark Blue (#00008B) |
-| `SHALLOW_WATER` | Shallow water | ⚠️ Restricted (1/3 chance) | Blue (#4169E1) |
-| `RIVER` | Flowing water | ✅ Passable | Light Blue (#1E90FF) |
-| `SAND` | Desert/beach sand | ✅ Passable | Sandy (#F4A460) |
-| `GRASS` | Grasslands | ✅ Passable | Light Green (#90EE90) |
-| `MUD` | Muddy terrain | ⚠️ Restricted (1/3 chance) | Dark Brown (#8B4513) |
-| `DIRT` | Exposed soil | ✅ Passable | Light Brown (#CD853F) |
-| `CLAY` | Clay deposits | ✅ Passable | Bronze (#CD7F32) |
-| `FOREST` | Dense forest | ✅ Passable | Dark Green (#006400) |
-| `GRAVEL` | Rocky ground | ✅ Passable | Gray (#B8B8B8) |
-| `COBBLESTONE` | Stone paths | ✅ Passable | Dark Gray (#A9A9A9) |
-| `STONE` | Mountain/rock | ❌ Impassable | Gray (#808080) |
-| `SNOW` | Snow-covered | ⚠️ Restricted (1/4 chance) | White (#FFFFFF) |
+| Tile Type | Description | Player Movement | NPC Movement | Color |
+|-----------|-------------|-----------------|--------------|-------|
+| `DEEP_WATER` | Deep ocean/lakes | ❌ Impassable | ❌ Impassable | Dark Blue (#00008B) |
+| `SHALLOW_WATER` | Shallow water | ⚠️ Restricted (1/3 chance) | ❌ Impassable | Blue (#4169E1) |
+| `RIVER` | Flowing water | ✅ Passable | ✅ Passable | Light Blue (#1E90FF) |
+| `SAND` | Desert/beach sand | ✅ Passable | ✅ Passable | Sandy (#F4A460) |
+| `GRASS` | Grasslands | ✅ Passable | ✅ Passable | Light Green (#90EE90) |
+| `MUD` | Muddy terrain | ⚠️ Restricted (1/3 chance) | ✅ Passable | Dark Brown (#8B4513) |
+| `DIRT` | Exposed soil | ✅ Passable | ✅ Passable | Light Brown (#CD853F) |
+| `CLAY` | Clay deposits | ✅ Passable | ✅ Passable | Bronze (#CD7F32) |
+| `FOREST` | Dense forest | ✅ Passable | ✅ Passable | Dark Green (#006400) |
+| `GRAVEL` | Rocky ground | ✅ Passable | ✅ Passable | Gray (#B8B8B8) |
+| `COBBLESTONE` | Stone paths | ✅ Passable | ❌ Impassable | Dark Gray (#A9A9A9) |
+| `STONE` | Mountain/rock | ❌ Impassable | ❌ Impassable | Gray (#808080) |
+| `SNOW` | Snow-covered | ⚠️ Restricted (1/4 chance) | ❌ Impassable | White (#FFFFFF) |
+| `PLAYER` | Player position | Special | Special | Red (tracked separately) |
 
 ### **DIRT Tile Regeneration**
 - **Creation**: DIRT tiles are created when trees are destroyed
@@ -79,12 +88,12 @@ The world generates based on three noise layers:
 Generated based on temperature and humidity:
 
 **Cold Regions (temp < 0.2)**:
-- High elevation: SNOW → STONE → COBBLESTONE
+- High elevation: SNOW → STONE → COBBLESTONE (enhanced snow coverage at height > 0.75)
 - High humidity: FOREST
 - Low humidity: GRASS → STONE
 
 **Temperate Regions (0.4 < temp < 0.7)**:
-- High elevation: STONE → COBBLESTONE
+- High elevation: SNOW → STONE → COBBLESTONE (enhanced snow coverage at height > 0.65)
 - High humidity: FOREST → GRASS
 - Near water: CLAY/MUD mix
 - Low humidity: SAND
@@ -96,6 +105,7 @@ Generated based on temperature and humidity:
 
 ### **Background Sprite System**
 - **Grass Variants**: 6 different TexturedGrass.png variants (0-5) mapped to 3×2 grid
+- **Forest Background**: FOREST tiles use the same textured grass variants for enhanced visual depth
 - **Water Tiles**: Shore.png sprites for shallow/deep water (variants 2 and 4)
 - **Sand Tiles**: Shore.png sprite for sand (variant 0)
 - **Automatic Assignment**: Tiles automatically get sprite IDs based on coordinates
@@ -111,7 +121,7 @@ Generated based on temperature and humidity:
 - **Cooldown**: 120ms between moves when holding keys
 
 ### **Movement Rules**
-- **Impassable Tiles**: Cannot move to DEEP_WATER or STONE
+- **Impassable Tiles**: Cannot move to DEEP_WATER, SHALLOW_WATER, STONE, COBBLESTONE, or SNOW
 - **Living Structure Blocking**: Cannot move to tiles with alive trees/cactus (health > 0)
 - **Destroyed Structure Passage**: Can move through destroyed structures (health ≤ 0)
 - **Mud Restriction**: Only 1/3 chance to move when standing on MUD
@@ -131,8 +141,8 @@ Generated based on temperature and humidity:
 
 ### **NPC Movement System**
 - **Tile-Based Movement**: NPCs move between 16x16 pixel tiles like the player
-- **Fast Movement Cooldown**: 0.6 seconds between normal moves (increased from 1.0s)
-- **Quick Retry**: 0.15 seconds retry when blocked (reduced from 0.3s)
+- **Slowed Movement Cooldown**: 1.2 seconds between normal moves (reduced from 0.6s for more realistic pacing)
+- **Quick Retry**: 0.3 seconds retry when blocked (reduced from 0.6s)
 - **High Activity**: 80% chance to attempt movement each cycle for active animals
 - **Anti-Stuck Mechanism**: Force movement after 5 seconds of inactivity
 - **Reduced Spacing Restrictions**: 40% avoidance of adjacent tiles (down from 70%)
@@ -165,31 +175,39 @@ Generated based on temperature and humidity:
 - **Stack Management**: Intelligent stacking fills existing stacks first
 
 ### **Item Types & Stack Sizes**
-| Item Type | Max Stack | Source |
-|-----------|-----------|---------|
-| `wood` | 64 | Destroyed trees |
-| `cactus` | 64 | Destroyed cactus |
-| `wheat` | 64 | Wheat fields |
-| `health_potion` | 16 | Chests |
-| `poison_potion` | 16 | Chests |
-| `magic_potion` | 16 | Chests |
-| `stamina_potion` | 16 | Markets |
-| `health_heart` | 1 | Rare drops |
-| `hammer` | 1 | Markets |
-| `sword` | 1 | Markets, Chests |
-| `shield` | 1 | Markets |
-| `dagger` | 1 | Markets |
-| `rock` | 64 | Player-placed |
-| `copper_ore` | 64 | Stone mining |
-| `iron_ore` | 64 | Stone mining |
-| `gold_ore` | 64 | Stone mining |
-| `copper_ingot` | 64 | Processed |
-| `iron_ingot` | 64 | Processed |
-| `gold_ingot` | 64 | Processed |
-| `chicken_meat` | 64 | Animal drops |
-| `pork` | 64 | Animal drops |
-| `wool` | 64 | Animal drops |
-| `mutton` | 64 | Animal drops |
+| Item Type | Max Stack | Source | Special Properties |
+|-----------|-----------|--------|--------------------|
+| **Resources** | | | |
+| `wood` | 64 | Destroyed trees | Basic building material |
+| `cactus` | 64 | Destroyed cactus | Desert resource |
+| `rock` | 64 | Player-placed | Construction material |
+| **Food & Animal Products** | | | |
+| `chicken_meat` | 64 | Chicken combat drops | Food item |
+| `pork` | 64 | Pig combat drops | Food item |
+| `mutton` | 64 | Sheep combat drops | Food item |
+| `wool` | 64 | Sheep combat drops | Textile material |
+| `wheat` | 64 | Wheat field harvest | Animal attraction item |
+| **Potions** | | | |
+| `health_potion` | 16 | Chests | Healing item |
+| `poison_potion` | 16 | Chests | Harmful potion |
+| `magic_potion` | 16 | Chests | Special effects |
+| `stamina_potion` | 16 | Markets | Energy restoration |
+| **Special Items** | | | |
+| `health_heart` | 1 | Rare drops | Health boost |
+| **Weapons & Tools** | | | |
+| `hammer` | 1 | Markets | Damage: 15 |
+| `sword` | 1 | Markets, Chests | Damage: 20 |
+| `shield` | 1 | Markets | Defense item |
+| `dagger` | 1 | Markets | Damage: 10 |
+| **Ores & Ingots** | | | |
+| `copper_ore` | 64 | Monster drops, Stone mining | Raw material |
+| `iron_ore` | 64 | Stone mining | Raw material |
+| `gold_ore` | 64 | Stone mining | Raw material |
+| `copper_ingot` | 64 | Chests, Processed | Refined material |
+| `iron_ingot` | 64 | Processed | Refined material |
+| `gold_ingot` | 64 | Chests, Processed | Refined material |
+| **Monster Drops** | | | |
+| `monster_drop` | 64 | Defeated monsters | Monster essence |
 
 ### **Inventory UI**
 - **Visual Display**: 9 inventory slots rendered on right side of screen
@@ -276,22 +294,128 @@ Generated based on temperature and humidity:
 
 ### **Player Combat Stats**
 - **Attack Damage**: 5 damage per attack
-- **Health**: 100 HP
+- **Health**: 100 HP (max health)
 - **Attack Range**: Adjacent tiles only (facing direction)
 - **Attack Cooldown**: No cooldown (can attack continuously)
+- **Health Restoration**: Available via water wells (+25 health)
 
 ### **Attack Mechanics**
-- **Target Selection**: Attacks structure in facing direction
+- **Target Selection**: Attacks structure or NPC in facing direction
 - **Damage Application**: Consistent 5 damage per attack
-- **Health Tracking**: Structure health decreases with each attack
-- **Destruction Threshold**: Structures destroyed when health ≤ 0
+- **Health Tracking**: Target health decreases with each attack
+- **Destruction Threshold**: Targets destroyed when health ≤ 0
+- **Priority System**: Trees → Cactus → NPCs → Nothing
+
+### **NPC Combat & Drops**
+| NPC Type | Health | Drops When Defeated | Behavior When Attacked |
+|----------|---------|-------------------|------------------------|
+| **Chicken** | 20 HP | 1x Chicken Meat | Flees, becomes 'fleeing' state |
+| **Pig** | 35 HP | 3x Pork | Flees, becomes 'fleeing' state |
+| **Sheep** | 25 HP | 1x Mutton + 3x Wool | Flees, becomes 'fleeing' state |
+| **Trader** | 50 HP | No drops | Flees, becomes 'fleeing' state |
+| **Orc/Skeleton/Goblin** | 40 HP | 1x Copper Ore | Aggressive, continues attacking |
+
+### **Combat Feedback**
+- **Health Display**: NPCs show health bars when damaged
+- **Death Removal**: Dead NPCs are automatically removed from tiles
+- **Drop Collection**: Items automatically added to player inventory
+- **Console Logging**: Real-time combat updates and health tracking
 
 ### **Combat Controls**
-- **Attack**: `Q` key attacks structure in facing direction
-- **Target Display**: Console shows target tile and structure health
+- **Attack**: `Q` key attacks target in facing direction
+- **Target Display**: Console shows target tile and health status
 - **Damage Feedback**: Real-time health updates displayed
 
+## 🎮 **User Interface System**
+
+### **Bubble-Style UI Design**
+The game features a modern bubble-style UI with white backgrounds and rounded borders inspired by contemporary mobile interfaces:
+
+#### **Text Box System (Pokemon DS-Inspired)**
+- **Style**: Rounded bubble design with white background and subtle shadow
+- **Positioning**: Bottom of screen with 20px padding
+- **Activation**: Press `F` key on notice boards to display village information
+- **Dismissal**: Any key press or player movement closes the text box
+- **Content**: Village names, descriptions, and lore text
+- **Typography**: Clean Arial font with proper hierarchy (bold titles, regular body text)
+- **Responsive**: Adapts to screen width with proper text wrapping
+
+#### **Inventory UI (3DS-Inspired)**
+- **Style**: Bubble slots with rounded corners and modern aesthetics
+- **Layout**: 9 vertical slots on the right side of screen
+- **Slot Design**: White background bubbles with light blue selection highlighting
+- **Visual Elements**:
+  - Slot numbers (1-9) in top-left corner
+  - Item icons with simplified colored representations
+  - Quantity badges in bottom-right corner for stackable items
+  - Selected slot highlighting with blue border and background tint
+- **Interaction**: Click slots or use number keys 1-9 for selection
+- **Drop Shadow**: Subtle shadow effects for depth perception
+
+### **Notice Board System**
+A comprehensive village information system that provides lore and character to settlements:
+
+#### **Notice Board POI**
+- **Type**: `notice_board` - Interactive POI structure
+- **Placement**: 2-5 tiles from village center (water well)
+- **Spawn Rate**: 1 per village (automatically generated)
+- **Interaction**: Press `F` key to read village information
+- **Visual**: Dedicated notice board sprite from asset system
+
+#### **Village Name Generation**
+- **Algorithm**: Deterministic name generation based on village grid coordinates
+- **Components**: Combines friendly prefixes + descriptive suffixes
+- **Cache System**: Same village always gets same name across game sessions
+- **Child-Friendly**: All names use appropriate, positive language
+- **Examples**: Sunnyville, Happybrook, Crystalmeadow, Goldenhaven
+
+**Available Prefixes (50 options)**:
+- Nature: Sunny, Happy, Green, Bright, Sweet, Peaceful, Golden, Silver, Crystal, Rainbow
+- Emotions: Gentle, Cozy, Warm, Friendly
+- Flora: Cherry, Apple, Maple, Willow, Rose, Daisy
+- Elements: Honey, Sugar, Candy, Bubble, Sparkle, Twinkle, Star, Moon, Sun, Cloud
+- Colors: Blue, Purple, Pink, Orange, White
+- Seasons: Spring, Summer, Autumn, Winter
+- Geography: Meadow, River, Lake, Hill, Valley, Garden, Forest, Field, Brook, Grove, Creek
+
+**Available Suffixes (30 options)**:
+- Towns: ville, town, burg, ham
+- Nature: field, wood, brook, creek, dale, glen, haven, ridge, grove, meadow, valley, hills
+- Water: springs, gardens, falls, pond, bridge, crossing, hollow, cove, bay, shore
+- Elevation: view, heights, point, bend
+
+#### **Village Information Display**
+- **Dynamic Content**: Randomly generated welcome messages and village information
+- **Personalization**: Each village has unique personality reflected in notice text
+- **Contextual Messages**: References village features like wells, markets, and animals
+- **Interactive Elements**: Clear visual feedback and user-friendly controls
+
+### **UI Integration with Game Systems**
+- **Inventory Sync**: Real-time updates when items are collected or used
+- **Player Movement Detection**: Text boxes auto-dismiss on player movement
+- **Key Handling**: Comprehensive input system for UI interaction
+- **Canvas Rendering**: High-performance rendering with proper layering
+- **Responsive Design**: UI adapts to different screen sizes and resolutions
+
 ## 🏘️ **Village Generation System**
+
+### **Village Layout & Structure Types**
+| Structure | Position | Spawn Rate | Interaction |
+|-----------|----------|------------|-------------|
+| **Water Well** | Village center | 1 per village | `F` key - Restores 25 health |
+| **Notice Board** | 2-5 tiles from well | 1 per village | `F` key - Displays village info |
+| **Windmill** | 6-10 tiles from well | 1 per village | Animated (2s cycle) |
+| **Food Market** | 6-10 tiles from well | 1 per village | Trading interface |
+| **Butcher Market** | 6-10 tiles from well | 1 per village | Meat & animal products |
+| **Armory Market** | 6-10 tiles from well | 1 per village | Weapons & tools |
+| **Cloth Market** | 6-10 tiles from well | 1 per village | Textiles & materials |
+
+### **Village Naming & Identity System**
+- **Grid-Based Assignment**: Villages assigned to 50x50 tile grid areas
+- **Deterministic Generation**: Same seed produces same village names and locations
+- **Name Storage**: Village names stored in POI customData for persistence
+- **Cross-Reference System**: Notice boards can find nearby wells to get village names
+- **Fallback Naming**: "Unknown Village" for edge cases or corrupted data
 
 ### **Village Rarity & Placement**
 - **Noise-Based Grid System**: Uses dedicated village noise map with world seed for deterministic placement
@@ -301,40 +425,50 @@ Generated based on temperature and humidity:
 - **One Entity Per Tile**: Strict enforcement prevents multiple structures on same tile
 - **Deterministic Placement**: Same seed always generates villages in same locations
 
-### **Village Layout**
+### **Well-Centered Village Layout**
 | Structure | Position | Spawn Rate | Requirements |
 |-----------|----------|------------|--------------|
-| **Windmill** | Village center (best noise tile in grid area) | 1 per grid area | GRASS tile, animated (2-second cycle) |
-| **Food Market** | Exactly 8 tiles east of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Butcher Market** | Exactly 8 tiles west of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Armory Market** | Exactly 8 tiles south of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Cloth Market** | Exactly 8 tiles north of windmill | 1 per village | Valid terrain (not water/stone) |
+| **Water Well** | Village center (best noise tile in grid area) | 1 per grid area | GRASS tile, interactable (restores 25 health) |
+| **Windmill** | Randomly placed 6-10 tiles from well | 1 per village | Valid terrain (not water/stone), animated (2-second cycle) |
+| **Food Market** | Randomly placed 6-10 tiles from well | 1 per village | Valid terrain (not water/stone) |
+| **Butcher Market** | Randomly placed 6-10 tiles from well | 1 per village | Valid terrain (not water/stone) |
+| **Armory Market** | Randomly placed 6-10 tiles from well | 1 per village | Valid terrain (not water/stone) |
+| **Cloth Market** | Randomly placed 6-10 tiles from well | 1 per village | Valid terrain (not water/stone) |
+
+### **Village Structure Priority System**
+1. **POI Structures (Highest Priority)**: Wells, windmills, markets placed first
+2. **NPCs (Lowest Priority)**: Animals placed last to avoid conflicts with structures
+3. **Conflict Resolution**: Village structure POIs take precedence when placing in tiles
+4. **Random Placement**: Structures are placed in a spiral pattern around the well using deterministic randomization
+5. **Distance Constraints**: POI structures (6-10 tiles from well), NPCs (12-15 tiles from well)
 
 ### **Village Animals**
-- **Quantity**: Optimized spawn density (12 strategic positions around village centers)
-- **Types**: Chicken, Pig, Sheep (random selection)
-- **Placement**: 5-7 tiles from village center with strategic spacing to prevent clustering
+- **Quantity**: Optimized spawn density around village perimeter
+- **Types**: Chicken, Pig, Sheep (random selection with species grouping)
+- **Placement**: 12-15 tiles from well center to avoid conflicts with POI structures
 - **Enhanced Anti-Clustering**: 2-tile minimum spacing radius between all animals
-- **Multi-Layer Spacing Checks**:
-  - VillageGenerator: Checks 2-tile radius for existing animals
-  - Chunk: Validates spacing before adding NPCs
-  - WorldGenerator: Enhanced occupancy tracking during generation
 - **Movement Space**: Each animal requires at least 3 adjacent passable tiles
-- **Terrain Restriction**: Cannot spawn on DEEP_WATER or STONE (can spawn in SHALLOW_WATER)
-- **One Entity Per Tile**: Only one structure/NPC per tile (strict enforcement)
+- **Terrain Restriction**: Cannot spawn on DEEP_WATER, STONE, COBBLESTONE, SNOW, or SHALLOW_WATER
+- **Spawn Probability**: 30% chance per suitable tile for balanced population density
 
 ### **Village Generation Process**
 1. **Grid Area Evaluation**: Each 50x50 tile area is evaluated for village potential
 2. **Best Tile Selection**: Within qualifying areas, the tile with highest village noise value becomes village center
-3. **Windmill Placement**: Single windmill placed at selected center tile
-4. **Market Distribution**: Markets placed exactly 8 tiles away in cardinal directions during tile-by-tile generation
-5. **Animal Placement**: Village animals placed at predetermined offsets (±4, ±6 tiles) from village center during tile-by-tile generation
-6. **Conflict Prevention**: Each tile is processed individually, ensuring no two entities occupy the same tile
+3. **Well Placement**: Single water well placed at selected center tile
+4. **POI Structure Distribution**: Windmill and markets placed randomly in 6-10 tile radius from well
+5. **Animal Placement**: Village animals placed randomly in 12-15 tile radius from well during tile-by-tile generation
+6. **Conflict Prevention**: Each tile is processed individually, ensuring POI structures take precedence over NPCs
 7. **Area Marking**: Grid area marked as occupied to prevent duplicate villages
 
 ### **Biome Restrictions for Structures**
-- **POI Structures** (windmills, markets): Cannot be placed on DEEP_WATER, SHALLOW_WATER, or STONE tiles
-- **NPC Animals**: Cannot be placed on DEEP_WATER or STONE tiles, but CAN be placed in SHALLOW_WATER
+- **POI Structures** (wells, windmills, markets): Cannot be placed on DEEP_WATER, SHALLOW_WATER, STONE, COBBLESTONE, or SNOW tiles
+- **NPC Animals**: Cannot be placed on DEEP_WATER, STONE, COBBLESTONE, SNOW, or SHALLOW_WATER tiles
+
+### **Village Structure Spacing Requirements**
+- **POI Structure Spacing**: Minimum 2-tile spacing radius between all POI structures (wells, windmills, markets)
+- **Spacing Validation**: System prevents placement of POI structures too close to existing POI structures
+- **Animal Spacing**: Minimum 2-tile spacing radius between all NPCs for adequate movement space
+- **Priority System**: POI structures take precedence over NPCs during village generation
 
 ## 🏛️ **Points of Interest (POI) System**
 
@@ -343,16 +477,16 @@ Generated based on temperature and humidity:
 #### **Storage & Containers**
 | POI Type | Interaction | Contents |
 |----------|-------------|----------|
-| `normal_chest` | F key to open | Basic loot (copper_ingot, health_potion) |
-| `rare_chest` | F key to open | Rare loot (gold_ingot, magic_potion, sword) |
+| `normal_chest` | F key to open | Basic loot (copper_ingot x2, health_potion x2) |
+| `rare_chest` | F key to open | Rare loot (gold_ingot x3, magic_potion x1, sword x1) |
 | `tombstone` | F key to loot | Player death inventory |
 
 #### **Utilities & Services**
 | POI Type | Interaction | Effect |
 |----------|-------------|--------|
-| `water_well` | F key to drink | Restores 25 health |
+| `water_well` | F key to drink | Restores 25 health (village centers) |
+| `notice_board` | F key to read | Displays village information with generated names and lore |
 | `portal` | F key to teleport | Random teleportation |
-| `notice_board` | F key to read/write | Message system |
 | `empty_notice_board` | F key to post | Empty message board |
 
 #### **Transportation**
@@ -408,10 +542,11 @@ Generated based on temperature and humidity:
 - **Detection Range**: 5 tiles radius
 - **Wheat Attraction**: Animals follow players with wheat in inventory (5-tile radius)
 - **Dynamic Same-Type Attraction**: Variable attraction rates (6-40%) based on local animal density
-- **Tile-Based Movement**: NPCs move one tile at a time with 0.6-second cooldowns
+- **Tile-Based Movement**: NPCs move one tile at a time with 1.2-second cooldowns (slowed for realism)
 - **Movement Logic**: Direction-based movement towards/away from targets
 - **Flexible Spacing**: Animals can move adjacent to each other, only avoiding overcrowded tiles (2+ neighbors)
 - **Collision Avoidance**: NPCs avoid tiles occupied by other NPCs
+- **Terrain Restrictions**: NPCs cannot move onto DEEP_WATER, STONE, COBBLESTONE, SNOW, or SHALLOW_WATER tiles
 - **Personal Space System**: Animals actively escape when surrounded by 3+ same-type animals
 - **Exploration Behavior**: 25% chance for random exploration overriding attraction
 - **Crowded Repulsion**: Animals move away from cluster centers when feeling crowded
@@ -433,7 +568,7 @@ Generated based on temperature and humidity:
   - Living trees or cactus (health > 0)
   - Impassable POIs (markets, windmills, chests)
   - Other living NPCs
-  - Impassable terrain (DEEP_WATER, STONE)
+  - Impassable terrain (DEEP_WATER, SHALLOW_WATER, STONE, COBBLESTONE, SNOW)
 - **Direction Updates**: NPC facing direction is updated before moving to new tile
 - **Movement Validation**: If target tile is occupied, NPC velocity is reduced to prevent jittering
 - **Chunk-Based Tracking**: NPC positions are tracked per chunk for efficient collision detection
@@ -449,6 +584,7 @@ Generated based on temperature and humidity:
 - **Breeding Failure**: If no suitable adjacent tile is available, breeding fails but animals can try again after cooldown
 - **Population Growth**: Allows for dynamic animal population expansion in villages and wild areas
 - **Visual Feedback**: Console logs successful breeding events with parent locations
+- **World System Integration**: Breeding requests are handled by the World system for proper entity management
 
 ### **Animation System for NPCs**
 - **Directional Sprites**: 4 directions (up, down, left, right)
@@ -473,7 +609,10 @@ Generated based on temperature and humidity:
 - **Attack**: `Q` key - Attack structure in facing direction
 
 ### **Interaction Controls**
-- **Interact**: `F` key - Interact with POIs and structures (currently logs interaction, full functionality in development)
+- **Interact**: `F` key - Interact with POIs and structures
+  - **Notice Boards**: Displays village information in bubble-style text box
+  - **Water Wells**: Restores 25 health points
+  - **Other POIs**: Various context-specific interactions
 
 ### **Inventory Controls**
 - **Slot Selection**: `1-9` keys select inventory slots
@@ -497,14 +636,17 @@ Generated based on temperature and humidity:
 ### **Rendering Order**
 1. **Black Background**: Canvas filled with black (#000000) for tile borders
 2. **Base Color Layer**: 14x14 colored squares representing tile types
-3. **Background Sprite Layer**: TexturedGrass.png variants, Shore.png textures
+3. **Background Sprite Layer**: TexturedGrass.png variants for GRASS and FOREST, Shore.png textures
 4. **Player**: Red 10x10 square at screen center (renders behind entities)
 5. **Occupied Entity Layer**: Structures and NPCs on tiles
    - Tree Sprites: 16x16 tree sprites with growth animations
    - Cactus Sprites: 16x16 cactus sprites with variant animations
-   - POI Buildings: Markets, windmills, chests (static/animated)
+   - POI Buildings: Wells, markets, windmills, chests, notice boards (static/animated)
    - NPC Animals: Walking animals with directional animations
-6. **Inventory UI**: Right-side inventory slots (front-most layer)
+6. **Bubble UI Layer**: Modern interface elements (front-most layer)
+   - **Inventory UI**: Right-side bubble slots with rounded corners and shadows
+   - **Text Box UI**: Bottom-screen bubble with village information and lore
+   - **Interactive Elements**: Selection highlighting and visual feedback
 
 ### **Animation System**
 - **Windmill Animation**: 3-frame animation (frames 3, 4, 5) with 2-second cycle
@@ -553,7 +695,7 @@ Currently a **survival/resource gathering game** with:
 ## 🔧 **Technical Implementation**
 
 ### **Tile-Based Movement System**
-- **Movement Cooldown**: 1.5-second delay between moves (slower than player's 120ms)
+- **Movement Cooldown**: 1.2-second delay between moves (slowed down for realistic animal behavior)
 - **Movement Logic**: NPCs choose one adjacent tile based on current state:
   - **Following**: Move towards player (when has wheat)
   - **Fleeing**: Move away from player/monsters (when damaged)
@@ -587,9 +729,11 @@ Currently a **survival/resource gathering game** with:
 
 ### **Village Structure System**
 - **Two-Pass Generation**: First pass generates tiles, second pass distributes structures
+- **Priority-Based Placement**: POI structures placed before NPCs to avoid conflicts
 - **Collision Detection**: Ensures only one structure per tile
 - **Terrain Validation**: Real-time tile type checking during placement
-- **Anti-Clustering**: Spacing enforcement prevents structure overlap
+- **Well-Centered Layout**: All village structures positioned relative to central water well
+- **Random Distribution**: Deterministic randomization for natural village layouts
 
 ### **Game State**
 ```typescript
@@ -629,14 +773,14 @@ Currently a **survival/resource gathering game** with:
 - **Update Throttling**: Expensive operations only when needed
 - **Animation Updates**: Smooth frame transitions using game loop timing
 
-### Anti-Clustering System
+### **Anti-Clustering System**
 - **Multi-Layer Validation**: Three-tier spacing enforcement (VillageGenerator, WorldGenerator, Chunk.ts)
 - **2-Tile Minimum Radius**: Animals require at least 2 empty tiles around them
 - **Adequate Movement Space**: Minimum 3 passable adjacent tiles for animal mobility
 - **Spawn Rejection Logging**: Console feedback for blocked spawn attempts
 - **Real-Time Validation**: Dynamic spacing checks during NPC addition to chunks
 
-### Species Grouping System
+### **Species Grouping System**
 - **Same-Type Attraction**: Animals are more likely to spawn near others of their species
 - **Detection Radius**: 4-tile radius check for nearby animals of the same type
 - **Grouping Bonus**: 3x higher spawn probability for same species when nearby animals detected
@@ -644,7 +788,7 @@ Currently a **survival/resource gathering game** with:
 - **Balanced Randomness**: Still allows diverse spawning while encouraging species grouping
 - **Applied to All Animals**: Both village and wild animals use species-preference logic
 
-### Dynamic Cluster Behavior
+### **Dynamic Cluster Behavior**
 - **Personal Space Mechanism**: Animals escape when surrounded by 3+ same-type animals within 2 tiles
 - **Crowded Repulsion**: 40% chance to move away from cluster center when feeling crowded
 - **Clustered Movement Boost**: Animals near others have 90% movement chance (vs 80% isolated)
@@ -660,4 +804,4 @@ Currently a **survival/resource gathering game** with:
 
 ---
 
-*This document reflects the current game implementation as a survival/resource management experience with procedural world generation, village systems, animated NPCs, and comprehensive sprite-based graphics. The game features a complete inventory system, combat mechanics, and environmental interactions.*
+*This document reflects the current game implementation as a survival/resource management experience with procedural world generation, well-centered village systems, animated NPCs, enhanced snow mountain regions, slowed animal movement for realism, forest background sprites, comprehensive sprite-based graphics, advanced animal breeding system, and deterministic village naming. The game features a complete inventory system, combat mechanics, environmental interactions with priority-based structure placement, and modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces.*

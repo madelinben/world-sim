@@ -2,7 +2,6 @@ import { createNoise2D } from 'simplex-noise';
 import type { Position } from '../engine/types';
 import { POI } from '../entities/poi/POI';
 import { NPC } from '../entities/npc/NPC';
-import { getStructureAssets, getAnimalAssets } from '../assets/AssetMap';
 
 export interface VillageStructure {
   type: string;
@@ -18,6 +17,24 @@ export class VillageGenerator {
   private mineNoise: (x: number, y: number) => number;
 
   private readonly VILLAGE_THRESHOLD = 0.85; // Very rare villages
+
+  // Village name generation data
+  private readonly VILLAGE_NAME_PREFIXES = [
+    'Sunny', 'Happy', 'Green', 'Bright', 'Sweet', 'Peaceful', 'Golden', 'Silver', 'Crystal', 'Rainbow',
+    'Gentle', 'Cozy', 'Warm', 'Friendly', 'Cherry', 'Apple', 'Maple', 'Willow', 'Rose', 'Daisy',
+    'Honey', 'Sugar', 'Candy', 'Bubble', 'Sparkle', 'Twinkle', 'Star', 'Moon', 'Sun', 'Cloud',
+    'Blue', 'Purple', 'Pink', 'Orange', 'White', 'Spring', 'Summer', 'Autumn', 'Winter', 'Meadow',
+    'River', 'Lake', 'Hill', 'Valley', 'Garden', 'Forest', 'Field', 'Brook', 'Grove', 'Creek'
+  ];
+
+  private readonly VILLAGE_NAME_SUFFIXES = [
+    'ville', 'town', 'burg', 'ham', 'field', 'wood', 'brook', 'creek', 'dale', 'glen',
+    'haven', 'ridge', 'grove', 'meadow', 'valley', 'hills', 'springs', 'gardens', 'falls', 'pond',
+    'bridge', 'crossing', 'hollow', 'cove', 'bay', 'shore', 'view', 'heights', 'point', 'bend'
+  ];
+
+  // Village names cache to ensure same village always gets same name
+  private villageNamesCache = new Map<string, string>();
 
   constructor(seed?: string) {
     const seedValue = this.hashSeed(seed ?? 'default');
@@ -86,21 +103,76 @@ export class VillageGenerator {
         tileOccupancyChecker
       );
 
-      // Only generate windmill if this is the designated best tile
+      // Only generate well if this is the designated best tile
       if (bestTile && bestTile.x === tileX && bestTile.y === tileY) {
-        console.log(`🏘️ Generating village center windmill at designated tile (${tileX}, ${tileY}) in grid area (${villageGridX}, ${villageGridY})`);
+        // Generate village name for this village
+        const villageName = this.generateVillageName(villageGridX, villageGridY);
+        console.log(`🏘️ Generating village center well at designated tile (${tileX}, ${tileY}) in grid area (${villageGridX}, ${villageGridY}) - Village: ${villageName}`);
 
-        const windmillPos = { x: worldX, y: worldY };
-        const windmill = this.createStructurePOI('windmill_frame_0', windmillPos);
-        if (windmill) {
-          structures.push(windmill);
-          existingStructures.set(tileKey, windmill);
-          existingStructures.set(villageAreaKey, windmill); // Mark area as having a village
-          console.log(`Generated windmill at village center tile (${tileX}, ${tileY})`);
+        // Register the well at village center
+        const worldX = tileX * 16;
+        const worldY = tileY * 16;
+        const well: VillageStructure = {
+          type: 'water_well',
+          position: { x: worldX, y: worldY },
+          poi: new POI({
+            type: 'water_well',
+            position: { x: worldX, y: worldY },
+            interactable: true,
+            passable: false,
+            customData: { villageName }
+          })
+        };
 
-          // DON'T generate the complete village here - it will be generated tile-by-tile
-          // This prevents conflicts and ensures proper tile occupancy checking
+        structures.push(well);
+        existingStructures.set(tileKey, well);
+        existingStructures.set(villageAreaKey, well); // Mark area as having a village
+        console.log(`Generated water well at village center tile (${tileX}, ${tileY}) for village: ${villageName}`);
+
+        // Generate additional POI structures around the well (6-10 tile radius)
+        const numStructures = Math.floor(Math.random() * 3) + 2; // 2-4 structures
+        const structureTypes = ['windmill', 'market_stall'];
+
+        for (let i = 0; i < numStructures; i++) {
+          const structureType = structureTypes[Math.floor(Math.random() * structureTypes.length)]!;
+          let placed = false;
+          let attempts = 0;
+          const maxAttempts = 20;
+
+          while (!placed && attempts < maxAttempts) {
+            const angle = Math.random() * 2 * Math.PI;
+            const distance = 6 + Math.random() * 4; // 6-10 tiles from center
+            const structX = Math.round(tileX + Math.cos(angle) * distance);
+            const structY = Math.round(tileY + Math.sin(angle) * distance);
+
+            if (tileOccupancyChecker && !tileOccupancyChecker(structX, structY) &&
+                this.hasAdequatePOISpacing(structX, structY, existingStructures)) {
+
+              const structWorldX = structX * 16;
+              const structWorldY = structY * 16;
+              const structure: VillageStructure = {
+                type: structureType,
+                position: { x: structWorldX, y: structWorldY },
+                poi: new POI({
+                  type: structureType,
+                  position: { x: structWorldX, y: structWorldY },
+                  interactable: false,
+                  passable: false,
+                  animated: structureType === 'windmill',
+                  customData: { villageName }
+                })
+              };
+              structures.push(structure);
+              placed = true;
+            }
+            attempts++;
+          }
         }
+
+
+
+        // DON'T generate the complete village here - it will be generated tile-by-tile
+        // This prevents conflicts and ensures proper tile occupancy checking
       }
     }
 
@@ -196,34 +268,102 @@ export class VillageGenerator {
     existingStructures: Map<string, VillageStructure>,
     structures: VillageStructure[]
   ): void {
-    // Check if this tile is exactly 8 tiles from any village center
-    const marketOffsets = [
-      { dx: 8, dy: 0, type: 'food_market' },    // 8 tiles east
-      { dx: -8, dy: 0, type: 'butcher_market' }, // 8 tiles west
-      { dx: 0, dy: 8, type: 'armory_market' },   // 8 tiles south
-      { dx: 0, dy: -8, type: 'cloth_market' }    // 8 tiles north
-    ];
+    // Check if this tile is within 6-10 tiles from any village center (well)
+    // Generate windmill and markets randomly around the well
+    const maxDistance = 10;
+    const minDistance = 6;
 
-    for (const offset of marketOffsets) {
-      const windmillX = tileX - offset.dx;
-      const windmillY = tileY - offset.dy;
-      const windmillKey = `${windmillX},${windmillY}`;
-      const windmillStructure = existingStructures.get(windmillKey);
+    // Search for nearby wells within reasonable distance
+    for (let dx = -maxDistance; dx <= maxDistance; dx++) {
+      for (let dy = -maxDistance; dy <= maxDistance; dy++) {
+        const wellX = tileX + dx;
+        const wellY = tileY + dy;
+        const wellKey = `${wellX},${wellY}`;
+        const wellStructure = existingStructures.get(wellKey);
 
-      if (windmillStructure && windmillStructure.type === 'windmill_frame_0') {
-        // This tile should have a market
-        if (this.isValidPOITerrain(tileType)) {
-          const marketPos = { x: tileX * 16, y: tileY * 16 };
-          const market = this.createStructurePOI(offset.type, marketPos);
-          if (market) {
-            structures.push(market);
-            existingStructures.set(`${tileX},${tileY}`, market);
-            console.log(`Generated ${offset.type} at tile (${tileX}, ${tileY}) for village at (${windmillX}, ${windmillY})`);
+        if (wellStructure && wellStructure.type === 'water_well') {
+          const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
+
+          // Only place structures within the valid distance range
+          if (distance >= minDistance && distance <= maxDistance && this.isValidPOITerrain(tileType)) {
+            // Check for adequate spacing between POI structures (minimum 2 tiles apart)
+            if (!this.hasAdequatePOISpacing(tileX, tileY, existingStructures)) {
+              return; // Skip placement if too close to other POI structures
+            }
+
+            // Determine what structure to place based on random seed and distance
+            const structureType = this.getRandomVillageStructureType(tileX, tileY, wellX, wellY, existingStructures);
+
+            if (structureType) {
+              const structurePos = { x: tileX * 16, y: tileY * 16 };
+              // Get village name from the well
+              const villageName = wellStructure.poi?.customData?.villageName as string ?? 'Unknown Village';
+              const structure = this.createStructurePOI(structureType, structurePos, villageName);
+              if (structure) {
+                structures.push(structure);
+                existingStructures.set(`${tileX},${tileY}`, structure);
+                console.log(`Generated ${structureType} at tile (${tileX}, ${tileY}) for village centered at well (${wellX}, ${wellY})`);
+                return; // Only place one structure per tile
+              }
+            }
           }
         }
-        break; // Only one market per tile
       }
     }
+  }
+
+  private getCirclePositions(centerX: number, centerY: number, radius: number): { x: number; y: number }[] {
+    const positions: { x: number; y: number }[] = [];
+
+    // Generate positions in a rough circle pattern
+    for (let angle = 0; angle < 360; angle += 30) { // Every 30 degrees
+      const radians = (angle * Math.PI) / 180;
+      const x = Math.round(centerX + radius * Math.cos(radians));
+      const y = Math.round(centerY + radius * Math.sin(radians));
+      positions.push({ x, y });
+    }
+
+    return positions;
+  }
+
+  private getRandomVillageStructureType(
+    tileX: number,
+    tileY: number,
+    wellX: number,
+    wellY: number,
+    existingStructures: Map<string, VillageStructure>
+  ): string | null {
+    // Use deterministic random based on tile position relative to well
+    const seed = (tileX - wellX) * 31 + (tileY - wellY) * 37 + wellX * 13 + wellY * 17;
+    const random = Math.abs(Math.sin(seed)) % 1;
+
+    // Count existing structures around this well to ensure variety
+    const villageStructureTypes = ['windmill_frame_0', 'food_market', 'butcher_market', 'armory_market', 'cloth_market', 'notice_board'];
+    const existingTypesNearWell = new Set<string>();
+
+    // Check what structures already exist near this well (within 10 tiles)
+    for (let dx = -10; dx <= 10; dx++) {
+      for (let dy = -10; dy <= 10; dy++) {
+        const checkX = wellX + dx;
+        const checkY = wellY + dy;
+        const checkKey = `${checkX},${checkY}`;
+        const structure = existingStructures.get(checkKey);
+        if (structure && villageStructureTypes.includes(structure.type)) {
+          existingTypesNearWell.add(structure.type);
+        }
+      }
+    }
+
+    // Find missing structure types that haven't been placed yet
+    const missingTypes = villageStructureTypes.filter(type => !existingTypesNearWell.has(type));
+
+    if (missingTypes.length === 0) {
+      return null; // All structures already placed for this village
+    }
+
+    // Select from missing types using deterministic random
+    const selectedIndex = Math.floor(random * missingTypes.length);
+    return missingTypes[selectedIndex] ?? null;
   }
 
   // Helper method to get tile type for coordinates (simplified)
@@ -255,40 +395,45 @@ export class VillageGenerator {
       return [];
     }
 
-    // Generate windmill at center tile (only on valid terrain)
-    const windmillTileKey = `${centerTileX},${centerTileY}`;
-    if (!existingStructures.has(windmillTileKey) && !(tileOccupancyChecker?.(centerTileX, centerTileY))) {
+    // Generate well at center tile (only on valid terrain)
+    const wellTileKey = `${centerTileX},${centerTileY}`;
+    if (!existingStructures.has(wellTileKey) && !(tileOccupancyChecker?.(centerTileX, centerTileY))) {
       const centerTileType = getTileType(centerTileX, centerTileY);
       if (this.isValidPOITerrain(centerTileType)) {
-        const windmillPos = { x: centerTileX * 16, y: centerTileY * 16 };
-        const windmill = this.createStructurePOI('windmill_frame_0', windmillPos);
-        if (windmill) {
-          structures.push(windmill);
-          existingStructures.set(windmillTileKey, windmill);
-          console.log(`Generated windmill at tile (${centerTileX}, ${centerTileY})`);
+        const wellPos = { x: centerTileX * 16, y: centerTileY * 16 };
+        const well = this.createStructurePOI('water_well', wellPos);
+        if (well) {
+          structures.push(well);
+          existingStructures.set(wellTileKey, well);
+          console.log(`Generated well at village center tile (${centerTileX}, ${centerTileY})`);
         }
       }
     }
 
-    // Generate markets around the windmill (well spaced)
-    const markets = [
-      { type: 'food_market', x: centerTileX + 8, y: centerTileY },      // 8 tiles east
-      { type: 'butcher_market', x: centerTileX - 8, y: centerTileY },   // 8 tiles west
-      { type: 'armory_market', x: centerTileX, y: centerTileY + 8 },    // 8 tiles south
-      { type: 'cloth_market', x: centerTileX, y: centerTileY - 8 }      // 8 tiles north
-    ];
+    // Generate markets and windmill randomly around the well (6-10 tiles away)
+    const villageStructures = ['windmill_frame_0', 'food_market', 'butcher_market', 'armory_market', 'cloth_market'];
+    let structuresPlaced = 0;
 
-    for (const market of markets) {
-      const marketTileKey = `${market.x},${market.y}`;
-      if (!existingStructures.has(marketTileKey) && !(tileOccupancyChecker?.(market.x, market.y))) {
-        const marketTileType = getTileType(market.x, market.y);
-        if (this.isValidPOITerrain(marketTileType)) {
-          const worldPos = { x: market.x * 16, y: market.y * 16 };
-          const marketPOI = this.createStructurePOI(market.type, worldPos);
-          if (marketPOI) {
-            structures.push(marketPOI);
-            existingStructures.set(marketTileKey, marketPOI);
-            console.log(`Generated ${market.type} at tile (${market.x}, ${market.y})`);
+    // Try to place structures in a spiral pattern around the well
+    for (let radius = 6; radius <= 10 && structuresPlaced < villageStructures.length; radius++) {
+      const positions = this.getCirclePositions(centerTileX, centerTileY, radius);
+
+      for (const pos of positions) {
+        if (structuresPlaced >= villageStructures.length) break;
+
+        const structureTileKey = `${pos.x},${pos.y}`;
+        if (!existingStructures.has(structureTileKey) && !(tileOccupancyChecker?.(pos.x, pos.y))) {
+          const structureTileType = getTileType(pos.x, pos.y);
+          if (this.isValidPOITerrain(structureTileType)) {
+            const structureType = villageStructures[structuresPlaced]!;
+            const worldPos = { x: pos.x * 16, y: pos.y * 16 };
+            const structurePOI = this.createStructurePOI(structureType, worldPos);
+            if (structurePOI) {
+              structures.push(structurePOI);
+              existingStructures.set(structureTileKey, structurePOI);
+              console.log(`Generated ${structureType} at tile (${pos.x}, ${pos.y})`);
+              structuresPlaced++;
+            }
           }
         }
       }
@@ -331,11 +476,11 @@ export class VillageGenerator {
               if (animal) {
                 structures.push(animal);
                 existingStructures.set(animalTileKey, animal);
-                console.log(`Generated ${animalType} at tile (${tilePos.x}, ${tilePos.y}) with adequate movement space`);
+                // Animal generated successfully
               }
             }
           } else {
-            console.log(`Skipped animal spawn at (${tilePos.x}, ${tilePos.y}) - insufficient adjacent passable space`);
+            // Skip animal - insufficient space
           }
         }
       }
@@ -344,9 +489,25 @@ export class VillageGenerator {
     // Generate traders near markets (1 per village, near a random market)
     const marketTypes = ['food_market', 'butcher_market', 'armory_market', 'cloth_market'];
     if (Math.random() < 0.8) { // 80% chance to have a trader
-      const randomMarket = markets[Math.floor(Math.random() * markets.length)];
-      if (randomMarket) {
-        const traderPos = { x: randomMarket.x + 1, y: randomMarket.y + 1 }; // 1 tile away from market
+      // Find a placed market structure near this village center
+      let marketPosition: { x: number; y: number } | null = null;
+
+      // Search for markets within 15 tiles of village center
+      for (let dx = -15; dx <= 15 && !marketPosition; dx++) {
+        for (let dy = -15; dy <= 15 && !marketPosition; dy++) {
+          const checkX = centerTileX + dx;
+          const checkY = centerTileY + dy;
+          const checkKey = `${checkX},${checkY}`;
+          const structure = existingStructures.get(checkKey);
+
+          if (structure && marketTypes.includes(structure.type)) {
+            marketPosition = { x: checkX, y: checkY };
+          }
+        }
+      }
+
+      if (marketPosition) {
+        const traderPos = { x: marketPosition.x + 1, y: marketPosition.y + 1 }; // 1 tile away from market
         const traderTileKey = `${traderPos.x},${traderPos.y}`;
 
         if (!existingStructures.has(traderTileKey) && !(tileOccupancyChecker?.(traderPos.x, traderPos.y))) {
@@ -357,7 +518,7 @@ export class VillageGenerator {
             if (trader) {
               structures.push(trader);
               existingStructures.set(traderTileKey, trader);
-              console.log(`Generated trader at tile (${traderPos.x}, ${traderPos.y})`);
+              // Trader generated successfully
             }
           }
         }
@@ -456,7 +617,7 @@ export class VillageGenerator {
 
     if (animal) {
       existingStructures.set(tileKey, animal);
-      console.log(`Generated wild ${animalType} at tile (${tileX}, ${tileY}) with species grouping`);
+      // Wild animal generated successfully
     }
 
     return animal;
@@ -500,14 +661,27 @@ export class VillageGenerator {
     return monster;
   }
 
-  private createStructurePOI(type: string, position: Position): VillageStructure | null {
+  private createStructurePOI(type: string, position: Position, villageName?: string): VillageStructure | null {
     try {
+      const customData: Record<string, unknown> = {};
+
+      if (villageName) {
+        customData.villageName = villageName;
+
+        // For notice boards, also add the title and text content
+        if (type === 'notice_board') {
+          customData.noticeTitle = `${villageName} Notice Board`;
+          customData.noticeText = this.generateNoticeText(villageName);
+        }
+      }
+
       const poi = new POI({
         type,
         position,
         interactable: true,
         passable: type.includes('entrance'),
-        animated: type === 'windmill_frame_0'
+        animated: type === 'windmill_frame_0',
+        customData
       });
 
       return {
@@ -597,13 +771,13 @@ export class VillageGenerator {
   }
 
   private isValidPOITerrain(tileType: string): boolean {
-    // POI structures (windmills, markets) cannot be placed on water or stone
-    return tileType !== 'DEEP_WATER' && tileType !== 'SHALLOW_WATER' && tileType !== 'STONE';
+    // POI structures (windmills, markets) cannot be placed on water, stone, cobblestone, or snow
+    return tileType !== 'DEEP_WATER' && tileType !== 'SHALLOW_WATER' && tileType !== 'STONE' && tileType !== 'COBBLESTONE' && tileType !== 'SNOW';
   }
 
   private isValidNPCTerrain(tileType: string): boolean {
-    // NPCs can be placed in shallow water but not deep water or stone
-    return tileType !== 'DEEP_WATER' && tileType !== 'STONE';
+    // NPCs cannot be placed on deep water, stone, cobblestone, snow, or shallow water
+    return tileType !== 'DEEP_WATER' && tileType !== 'STONE' && tileType !== 'COBBLESTONE' && tileType !== 'SNOW' && tileType !== 'SHALLOW_WATER';
   }
 
   private checkForVillageAnimalPlacement(
@@ -613,55 +787,50 @@ export class VillageGenerator {
     existingStructures: Map<string, VillageStructure>,
     structures: VillageStructure[]
   ): void {
-    // Check if this tile is at predetermined animal offsets from any village center
-    const animalOffsets = [
-      // Core positions with good spacing (matching the village generation)
-      { dx: 5, dy: 5 },   // Southeast, 5 tiles away
-      { dx: -5, dy: 5 },  // Southwest, 5 tiles away
-      { dx: 5, dy: -5 },  // Northeast, 5 tiles away
-      { dx: -5, dy: -5 }, // Northwest, 5 tiles away
+    // Check if this tile is within 12-15 tiles from any village center (well)
+    // Animals should be placed further out than POI structures to avoid conflicts
+    const maxDistance = 15;
+    const minDistance = 12;
 
-      // Cardinal directions with good spacing
-      { dx: 7, dy: 0 },   // East, 7 tiles away
-      { dx: -7, dy: 0 },  // West, 7 tiles away
-      { dx: 0, dy: 7 },   // South, 7 tiles away
-      { dx: 0, dy: -7 },  // North, 7 tiles away
+    // Search for nearby wells within reasonable distance
+    for (let dx = -maxDistance; dx <= maxDistance; dx++) {
+      for (let dy = -maxDistance; dy <= maxDistance; dy++) {
+        const wellX = tileX + dx;
+        const wellY = tileY + dy;
+        const wellKey = `${wellX},${wellY}`;
+        const wellStructure = existingStructures.get(wellKey);
 
-      // Additional spread-out positions
-      { dx: 3, dy: 7 },   // Southeast, far
-      { dx: -3, dy: 7 },  // Southwest, far
-      { dx: 7, dy: 3 },   // Northeast, far
-      { dx: -7, dy: -3 }  // Northwest, far
-    ];
+        if (wellStructure && wellStructure.type === 'water_well') {
+          const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
 
-    for (const offset of animalOffsets) {
-      const windmillX = tileX - offset.dx;
-      const windmillY = tileY - offset.dy;
-      const windmillKey = `${windmillX},${windmillY}`;
-      const windmillStructure = existingStructures.get(windmillKey);
+          // Only place animals within the valid distance range and appropriate terrain
+          if (distance >= minDistance && distance <= maxDistance && this.isValidNPCTerrain(tileType)) {
+            // Check if this position has enough adjacent passable space
+            if (this.hasAdjacentPassableSpace(tileX, tileY, existingStructures)) {
+              // Use deterministic random to decide if animal should spawn here (30% chance)
+              const seed = tileX * 31 + tileY * 37 + wellX * 13 + wellY * 17;
+              const random = Math.abs(Math.sin(seed)) % 1;
 
-      if (windmillStructure && windmillStructure.type === 'windmill_frame_0') {
-        // This tile should have a village animal
-        if (this.isValidNPCTerrain(tileType)) {
-          // Check if this position has enough adjacent passable space
-          if (this.hasAdjacentPassableSpace(tileX, tileY, existingStructures)) {
-            // Use species grouping logic for animal selection
-            const animalType = this.selectAnimalTypeWithGrouping(tileX, tileY, existingStructures);
+              if (random < 0.3) { // 30% chance to spawn animal
+                // Use species grouping logic for animal selection
+                const animalType = this.selectAnimalTypeWithGrouping(tileX, tileY, existingStructures);
 
-            if (animalType) {
-              const animalPos = { x: tileX * 16, y: tileY * 16 };
-              const animal = this.createAnimalNPC(animalType, animalPos);
-              if (animal) {
-                structures.push(animal);
-                existingStructures.set(`${tileX},${tileY}`, animal);
-                console.log(`Generated village ${animalType} at tile (${tileX}, ${tileY}) for village at (${windmillX}, ${windmillY}) with species grouping`);
+                if (animalType) {
+                  const animalPos = { x: tileX * 16, y: tileY * 16 };
+                  const animal = this.createAnimalNPC(animalType, animalPos);
+                  if (animal) {
+                    structures.push(animal);
+                    existingStructures.set(`${tileX},${tileY}`, animal);
+                    console.log(`Generated village ${animalType} at tile (${tileX}, ${tileY}) for village centered at well (${wellX}, ${wellY}) with species grouping`);
+                    return; // Only place one animal per tile
+                  }
+                }
               }
+            } else {
+              // Skip animal - insufficient movement space
             }
-          } else {
-            console.log(`Skipped village animal at (${tileX}, ${tileY}) - insufficient movement space`);
           }
         }
-        break; // Only one animal per tile
       }
     }
   }
@@ -687,7 +856,6 @@ export class VillageGenerator {
         // Check if there's already an animal at this location
         const existingStructure = existingStructures.get(checkKey);
         if (existingStructure?.npc) {
-          console.log(`Spacing violation: Animal already exists at (${checkX},${checkY}), too close to proposed spawn at (${tileX},${tileY})`);
           return false; // Too close to another animal
         }
 
@@ -697,7 +865,6 @@ export class VillageGenerator {
           // For now, we'll be conservative and avoid any occupied tiles nearby
           const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
           if (distance <= 1) { // Immediately adjacent tiles must be free
-            console.log(`Spacing violation: Adjacent tile (${checkX},${checkY}) is occupied, blocking spawn at (${tileX},${tileY})`);
             return false;
           }
         }
@@ -720,14 +887,13 @@ export class VillageGenerator {
       if (!existingStructures.has(adjacentKey) && !(tileOccupancyChecker?.(adjacentTile.x, adjacentTile.y))) {
         // Check if it's valid terrain for movement
         const tileType = this.getTileTypeForCoords(adjacentTile.x, adjacentTile.y);
-        if (this.isValidNPCTerrain(tileType) && tileType !== 'DEEP_WATER' && tileType !== 'STONE') {
+        if (this.isValidNPCTerrain(tileType)) {
           passableCount++;
         }
       }
     }
 
     if (passableCount < 3) {
-      console.log(`Movement violation: Only ${passableCount} passable adjacent tiles at (${tileX},${tileY}), need at least 3`);
       return false;
     }
 
@@ -789,7 +955,7 @@ export class VillageGenerator {
         for (let i = 0; i < groupingBonus; i++) {
           weightedTypes.push(animalType);
         }
-        console.log(`Found ${nearbyCount} nearby ${animalType}(s), applying grouping bonus`);
+        // Applying grouping bonus for nearby animals
       } else {
         // Add single entry for types without nearby animals
         weightedTypes.push(animalType);
@@ -799,5 +965,85 @@ export class VillageGenerator {
     // Select randomly from weighted list
     const selectedType = weightedTypes[Math.floor(Math.random() * weightedTypes.length)];
     return selectedType ?? animalTypes[0]!
+  }
+
+  // New method to check POI structure spacing
+  private hasAdequatePOISpacing(
+    tileX: number,
+    tileY: number,
+    existingStructures: Map<string, VillageStructure>
+  ): boolean {
+    const minSpacingRadius = 2; // Require 2-tile minimum spacing between POI structures
+    const poiStructureTypes = ['water_well', 'windmill_frame_0', 'food_market', 'butcher_market', 'armory_market', 'cloth_market', 'notice_board'];
+
+    // Check all tiles within the spacing radius
+    for (let dx = -minSpacingRadius; dx <= minSpacingRadius; dx++) {
+      for (let dy = -minSpacingRadius; dy <= minSpacingRadius; dy++) {
+        if (dx === 0 && dy === 0) continue; // Skip the center tile
+
+        const checkX = tileX + dx;
+        const checkY = tileY + dy;
+        const checkKey = `${checkX},${checkY}`;
+
+        // Check if there's already a POI structure at this location
+        const existingStructure = existingStructures.get(checkKey);
+        if (existingStructure?.poi && poiStructureTypes.includes(existingStructure.type)) {
+          return false; // Too close to another POI structure
+        }
+      }
+    }
+
+    return true; // Adequate spacing found
+  }
+
+  private generateVillageName(villageGridX: number, villageGridY: number): string {
+    const villageKey = `village_${villageGridX}_${villageGridY}`;
+
+    // Return cached name if already generated
+    if (this.villageNamesCache.has(villageKey)) {
+      return this.villageNamesCache.get(villageKey)!;
+    }
+
+    // Generate deterministic name based on grid coordinates
+    const seed = villageGridX * 31 + villageGridY * 37;
+    const prefixIndex = Math.floor(Math.abs(Math.sin(seed)) * this.VILLAGE_NAME_PREFIXES.length);
+    const suffixIndex = Math.floor(Math.abs(Math.sin(seed + 1)) * this.VILLAGE_NAME_SUFFIXES.length);
+
+    const prefix = this.VILLAGE_NAME_PREFIXES[prefixIndex] ?? 'Sunny';
+    const suffix = this.VILLAGE_NAME_SUFFIXES[suffixIndex] ?? 'ville';
+
+    const villageName = `${prefix}${suffix}`;
+    this.villageNamesCache.set(villageKey, villageName);
+
+    return villageName;
+  }
+
+  private generateNoticeText(villageName: string): string {
+    const welcomeMessages = [
+      `Welcome to ${villageName}!`,
+      `Greetings, traveler! You have arrived at ${villageName}.`,
+      `${villageName} welcomes you, adventurer!`,
+      `You've discovered the peaceful village of ${villageName}.`
+    ];
+
+    const villageInfo = [
+      'This village is home to friendly animals and hardworking villagers.',
+      'Our markets offer fresh goods and supplies for your journey.',
+      'The windmill provides grain for the whole community.',
+      'Feel free to explore and meet our animal friends!',
+      'The village well provides clean water for all residents.',
+      'Trade with our merchants to stock up on supplies.',
+      'Our community has thrived here for many generations.'
+    ];
+
+    // Use deterministic random based on village name
+    const nameHash = villageName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const welcomeIndex = nameHash % welcomeMessages.length;
+    const infoIndex = (nameHash * 7) % villageInfo.length;
+
+    const selectedWelcome = welcomeMessages[welcomeIndex] ?? welcomeMessages[0]!;
+    const selectedInfo = villageInfo[infoIndex] ?? villageInfo[0]!;
+
+    return `${selectedWelcome}\n\n${selectedInfo}\n\nPress any key to continue...`;
   }
 }

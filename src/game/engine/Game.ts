@@ -8,9 +8,6 @@ import { WorldGenerator } from '~/game/world/WorldGenerator';
 import { AnimationSystem } from '~/game/systems/AnimationSystem';
 import { Player as PlayerEntity } from '~/game/entities/player/Player';
 import { InventoryUI } from '~/game/ui/InventoryUI';
-import type { InventoryItem } from '~/game/entities/inventory/Inventory';
-import type { Tree } from '~/game/entities/structure/Tree';
-import type { Cactus } from '~/game/entities/structure/Cactus';
 
 // Player helper class for adjacent tile logic
 export class Player {
@@ -78,6 +75,9 @@ export class Game {
         this.movement = new Movement(this.world);
         this.animationSystem = new AnimationSystem();
         this.inventoryUI = new InventoryUI();
+
+        // Connect UI systems
+        this.camera.uiManager.setInventory(this.player.inventory);
 
         // Connect world with animation system
         this.world.setAnimationSystem(this.animationSystem);
@@ -179,6 +179,9 @@ export class Game {
             this.player.getInventoryItems(),
             this.player.getSelectedSlot()
         );
+
+        // Render UI Manager (Pokemon DS-style text box and 3DS-style inventory)
+        this.camera.renderUI();
     }
 
     private renderPlayer(ctx: CanvasRenderingContext2D): void {
@@ -190,6 +193,15 @@ export class Game {
     }
 
     private handlePlayerActions(): void {
+        // Handle keyboard input to dismiss text box
+        if (this.camera.uiManager.isTextBoxVisible()) {
+            // Any key press dismisses the text box
+            if (this.controls.wasAnyKeyPressed()) {
+                this.camera.uiManager.hideTextBox();
+                return; // Don't process other actions while text box is visible
+            }
+        }
+
         // Handle inventory slot selection (1-9)
         for (let i = 1; i <= 9; i++) {
             if (this.controls.wasKeyJustPressed(`slot${i}`)) {
@@ -294,8 +306,29 @@ export class Game {
                 }
             }
         }
+        // Check for NPCs
         else {
-            console.log('Nothing to attack in that direction');
+            const npc = this.world.getNPCAt(tileX, tileY);
+            if (npc) {
+                            npc.takeDamage(this.player.attackDamage);
+
+            if (npc.isDead()) {
+
+                    // Get drops and add to inventory
+                    const drops = this.world.removeDeadNPCAt(tileX, tileY);
+                    for (const drop of drops) {
+                        const added = this.player.addToInventory(drop.type, drop.quantity);
+                        if (added) {
+                            console.log(`✅ Added ${drop.quantity} ${drop.type} to inventory`);
+                        } else {
+                            console.log(`❌ Inventory full! Could not add ${drop.quantity} ${drop.type}`);
+                        }
+                    }
+
+                }
+            } else {
+                console.log('Nothing to attack in that direction');
+            }
         }
     }
 
@@ -307,7 +340,25 @@ export class Game {
         const tile = this.world.getTile(tileX, tileY);
         console.log(`Interacting with tile at (${tileX}, ${tileY}):`, tile?.value);
 
-        // For now, just log what we're interacting with
+        // Check for POI structures first
+        const poi = this.world.getPOIAt(tileX, tileY);
+        if (poi?.type === 'notice_board') {
+            console.log('Interacting with notice board');
+
+            // Get pre-generated notice text and title from the notice board
+            const villageName = poi.customData?.villageName as string ?? 'Unknown Village';
+            const noticeTitle = poi.customData?.noticeTitle as string ?? `${villageName} Notice Board`;
+            const noticeText = poi.customData?.noticeText as string ?? `Welcome to ${villageName}!\n\nPress any key to continue...`;
+
+            this.camera.uiManager.showTextBox({
+                text: noticeText,
+                title: noticeTitle,
+                villageName: villageName
+            });
+            return;
+        }
+
+        // Check for other interactable structures
         if (tile?.trees && tile.trees.length > 0) {
             console.log('Interacting with tree - could harvest fruit, check growth, etc.');
         } else if (tile?.cactus && tile.cactus.length > 0) {
@@ -316,6 +367,8 @@ export class Game {
             console.log('Nothing to interact with in that direction');
         }
     }
+
+
 
     private logFacingTile(): void {
         const facingPos = this.player.getFacingPosition(WorldGenerator.TILE_SIZE);
@@ -331,7 +384,13 @@ export class Game {
         }
         if (tile?.cactus && tile.cactus.length > 0) {
             const cactus = tile.cactus[0];
-            tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP)`;
+            tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP, Variant: ${cactus?.getVariant()})`;
+        }
+
+        // Check for NPCs
+        const npc = this.world.getNPCAt(tileX, tileY);
+        if (npc) {
+            tileInfo += ` (${npc.type}: ${npc.health}/${npc.maxHealth} HP)`;
         }
 
         console.log(`Facing tile: ${tileInfo}`);

@@ -1,5 +1,5 @@
 import { type Tree } from '../entities/structure/Tree';
-import { type Cactus } from '../entities/structure/Cactus';
+import { type Cactus, CactusVariant } from '../entities/structure/Cactus';
 import type { Camera } from './Camera';
 
 export interface AnimatedEntity {
@@ -24,7 +24,8 @@ export class AnimationSystem {
   }
 
   public addCactus(tileKey: string, cactus: Cactus): void {
-    this.cactus.set(`${tileKey}_${cactus.x}_${cactus.y}`, cactus);
+    const key = `${tileKey}_${cactus.x}_${cactus.y}`;
+    this.cactus.set(key, cactus);
     this.animatedEntities.add(cactus);
   }
 
@@ -89,6 +90,12 @@ export class AnimationSystem {
       // Calculate the final sprite position (tile position + border offset)
       const spriteX = tileScreenPos.x - 8 + 1; // tile center offset + border offset
       const spriteY = tileScreenPos.y - 8 + 1;
+
+      // Check for sprite loading issues
+      if (!cactusEntity.isSpriteLoaded()) {
+        console.warn(`🌵 Cactus sprite not loaded at (${tileX}, ${tileY}) - world (${cactusEntity.x}, ${cactusEntity.y})`);
+        continue;
+      }
 
       // Only render if the cactus is actually within the canvas bounds
       if (spriteX >= -16 && spriteX <= ctx.canvas.width + 16 &&

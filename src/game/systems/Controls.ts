@@ -129,6 +129,10 @@ export class Controls {
         return this.justPressed[key] ?? false;
     }
 
+    public wasAnyKeyPressed(): boolean {
+        return Object.values(this.justPressed).some(pressed => pressed);
+    }
+
     public getMovementDirection(): { x: number; y: number } {
         let x = 0;
         let y = 0;

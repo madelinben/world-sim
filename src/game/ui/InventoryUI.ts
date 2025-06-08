@@ -65,7 +65,6 @@ export class InventoryUI {
       }
 
       this.imagesLoaded = true;
-      console.log('Inventory UI sprites loaded successfully');
     } catch (error) {
       console.error('Failed to load inventory UI sprites:', error);
     }
