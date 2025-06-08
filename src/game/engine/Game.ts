@@ -74,7 +74,7 @@ export class Game {
 
         // Initialize systems
         this.camera = new Camera(this.canvas);
-        this.world = new World(new WorldGenerator(seed));
+        this.world = new World(this.camera, new WorldGenerator(seed));
         this.movement = new Movement(this.world);
         this.animationSystem = new AnimationSystem();
         this.inventoryUI = new InventoryUI();
@@ -135,7 +135,10 @@ export class Game {
         // Update player entity position to match game state
         this.player.setPosition(player.position);
 
-        // Only update expensive systems if forced or something changed
+        // Always update the world for NPCs and animations
+        this.world.update(deltaTime, player.position, this.player.getInventoryItems().filter(item => item !== null));
+
+        // Only update expensive cache invalidation if forced or something changed
         if (forceUpdate || changed) {
             // Check NPCs only when forced
             const npcsStr = JSON.stringify(this.gameState.world.npcs);
@@ -150,8 +153,6 @@ export class Game {
                 this.lastPOIs = poisStr;
                 changed = true;
             }
-
-            this.world.update(deltaTime, player.position, this.player.getInventoryItems().filter(item => item !== null));
         }
 
         // Always update animations for smooth tree growth

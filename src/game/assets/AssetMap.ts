@@ -622,6 +622,44 @@ export const ASSET_MAP: Record<string, AssetMapping> = {
       spawning: { chance: 0.0012, biomes: ['GRASS'] },
       dropItems: [{ type: 'wool', quantity: 1 }, { type: 'mutton', quantity: 1 }]
     }
+  },
+
+  // NPCs
+  monster: {
+    name: 'Monster',
+    spritePath: '/sprites/Characters/champions/Okomo.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 80,
+      animated: true,
+      animationFrames: [0, 1, 2, 3], // down movement
+      spawning: { chance: 0.0001, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 1 }]
+    }
+  },
+
+  trader: {
+    name: 'Trader',
+    spritePath: '/sprites/Characters/champions/Okomo.png',
+    index: 4,
+    category: 'animal',
+    properties: {
+      health: 50,
+      animated: true,
+      animationFrames: [4, 5, 6, 7], // down movement with different sprite
+      spawning: { chance: 0.0005, biomes: ['GRASS'] },
+      dropItems: [{ type: 'gold_ingot', quantity: 1 }]
+    }
+  },
+
+  // Monster drops
+  monster_drop: {
+    name: 'Monster Essence',
+    spritePath: '/sprites/User Interface/Icons-Essentials.png',
+    index: 20,
+    category: 'inventory',
+    properties: { maxStack: 64 }
   }
 };
 

@@ -2,11 +2,14 @@ import type { Tile } from './WorldGenerator';
 import type { WorldGenerator } from './WorldGenerator';
 import type { Tree } from '../entities/structure/Tree';
 import type { Cactus } from '../entities/structure/Cactus';
+import type { VillageStructure } from './VillageGenerator';
+import type { NPC } from '../entities/npc/NPC';
 
 export interface ChunkEntityData {
   trees: Map<string, Tree>;
   cactus: Map<string, Cactus>;
   modifiedTiles: Map<string, Tile>;
+  npcStructures: Map<string, VillageStructure>;
 }
 
 export class Chunk {
@@ -26,7 +29,8 @@ export class Chunk {
     this.entityData = {
       trees: new Map(),
       cactus: new Map(),
-      modifiedTiles: new Map()
+      modifiedTiles: new Map(),
+      npcStructures: new Map()
     };
   }
 
@@ -108,9 +112,223 @@ export class Chunk {
     return this.entityData.modifiedTiles;
   }
 
+  addNPC(localX: number, localY: number, npcStructure: VillageStructure): boolean {
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= this.size ||
+      localY >= this.size
+    ) {
+      return false;
+    }
+
+    const tileKey = `${localX},${localY}`;
+    const tile = this.getTile(localX, localY);
+
+    if (!tile) return false;
+
+    // Check if tile is already occupied by another entity
+    if (this.isTileOccupied(localX, localY)) {
+      return false;
+    }
+
+    // Enhanced spacing check for NPCs to prevent clustering
+    if (npcStructure.npc) {
+      if (!this.hasAdequateNPCSpacing(localX, localY)) {
+        console.log(`NPC spacing check failed at chunk tile (${localX},${localY})`);
+        return false;
+      }
+    }
+
+    // Add to both chunk entity data and tile structure
+    this.entityData.npcStructures.set(tileKey, npcStructure);
+
+    // Add to tile's village structures
+    tile.villageStructures = tile.villageStructures ?? [];
+    tile.villageStructures.push(npcStructure);
+
+    return true;
+  }
+
+  // Add method to check for adequate NPC spacing within the chunk
+  private hasAdequateNPCSpacing(localX: number, localY: number): boolean {
+    const minSpacingRadius = 2; // 2-tile minimum spacing
+
+    // Check all tiles within the spacing radius
+    for (let dx = -minSpacingRadius; dx <= minSpacingRadius; dx++) {
+      for (let dy = -minSpacingRadius; dy <= minSpacingRadius; dy++) {
+        if (dx === 0 && dy === 0) continue; // Skip the center tile
+
+        const checkX = localX + dx;
+        const checkY = localY + dy;
+
+        // Skip tiles outside this chunk (we can't check other chunks easily)
+        if (checkX < 0 || checkX >= this.size || checkY < 0 || checkY >= this.size) {
+          continue;
+        }
+
+        const checkKey = `${checkX},${checkY}`;
+
+        // Check if there's already an NPC at this location
+        const existingStructure = this.entityData.npcStructures.get(checkKey);
+        if (existingStructure?.npc) {
+          return false; // Too close to another NPC
+        }
+
+        // Also check tile's village structures for NPCs
+        const tile = this.getTile(checkX, checkY);
+        if (tile?.villageStructures) {
+          for (const structure of tile.villageStructures) {
+            if (structure.npc) {
+              return false; // Too close to another NPC
+            }
+          }
+        }
+      }
+    }
+
+    return true;
+  }
+
+  removeNPC(localX: number, localY: number): boolean {
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= this.size ||
+      localY >= this.size
+    ) {
+      return false;
+    }
+
+    const tileKey = `${localX},${localY}`;
+    const tile = this.getTile(localX, localY);
+
+    if (!tile) return false;
+
+    // Remove from chunk entity data
+    const npcStructure = this.entityData.npcStructures.get(tileKey);
+    if (!npcStructure) return false;
+
+    this.entityData.npcStructures.delete(tileKey);
+
+    // Remove from tile's village structures
+    if (tile.villageStructures) {
+      tile.villageStructures = tile.villageStructures.filter(structure => structure !== npcStructure);
+      if (tile.villageStructures.length === 0) {
+        delete tile.villageStructures;
+      }
+    }
+
+    return true;
+  }
+
+  moveNPC(oldLocalX: number, oldLocalY: number, newLocalX: number, newLocalY: number): boolean {
+    // Get the NPC structure from old position
+    const oldTileKey = `${oldLocalX},${oldLocalY}`;
+    const newTileKey = `${newLocalX},${newLocalY}`;
+    const npcStructure = this.entityData.npcStructures.get(oldTileKey);
+
+    if (!npcStructure?.npc) {
+      return false;
+    }
+
+    // Check if moving to same position
+    if (oldLocalX === newLocalX && oldLocalY === newLocalY) {
+      return true; // No movement needed
+    }
+
+    // Check if new position is valid
+    if (newLocalX < 0 || newLocalX >= this.size || newLocalY < 0 || newLocalY >= this.size) {
+      return false;
+    }
+
+    const newTile = this.getTile(newLocalX, newLocalY);
+    if (!newTile) {
+      return false;
+    }
+
+    // Check if new tile is available (excluding the NPC we're moving)
+    const isImpassableTerrain = newTile.value === 'DEEP_WATER' || newTile.value === 'STONE';
+    const hasLivingTrees = newTile.trees?.some(tree => tree.getHealth() > 0) ?? false;
+    const hasLivingCactus = newTile.cactus?.some(cactus => cactus.getHealth() > 0) ?? false;
+    const isNewTileBlocked = isImpassableTerrain || hasLivingTrees || hasLivingCactus;
+
+    if (isNewTileBlocked) {
+      return false;
+    }
+
+    // Check if new tile is occupied by other entities (excluding the moving NPC)
+    if (this.isTileOccupied(newLocalX, newLocalY, npcStructure.npc)) {
+      return false;
+    }
+
+    // Remove from old position
+    this.removeNPC(oldLocalX, oldLocalY);
+
+    // Add to new position
+    this.entityData.npcStructures.set(newTileKey, npcStructure);
+    newTile.villageStructures = newTile.villageStructures ?? [];
+    newTile.villageStructures.push(npcStructure);
+
+    // Update NPC position coordinates (convert local to world coordinates)
+    const worldX = this.chunkX * this.size + newLocalX;
+    const worldY = this.chunkY * this.size + newLocalY;
+    npcStructure.position = { x: worldX * 16, y: worldY * 16 };
+    npcStructure.npc.position = { x: worldX * 16, y: worldY * 16 };
+
+    // Successfully moved
+    return true;
+  }
+
+  isTileOccupied(localX: number, localY: number, excludeNPC?: NPC): boolean {
+    const tile = this.getTile(localX, localY);
+    if (!tile) return true; // Treat invalid tiles as occupied
+
+    // Check for impassable terrain
+    if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') {
+      return true;
+    }
+
+    // Check for living trees
+    if (tile.trees?.some(tree => tree.getHealth() > 0)) {
+      return true;
+    }
+
+    // Check for living cactus
+    if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
+      return true;
+    }
+
+    // Check for village structures (POIs and NPCs)
+    if (tile.villageStructures) {
+      for (const structure of tile.villageStructures) {
+        // Check for impassable POIs
+        if (structure.poi && !structure.poi.passable) {
+          return true;
+        }
+        // Check for living NPCs (excluding the one we're checking for)
+        if (structure.npc && !structure.npc.isDead() && structure.npc !== excludeNPC) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  getNPC(localX: number, localY: number): VillageStructure | undefined {
+    const tileKey = `${localX},${localY}`;
+    return this.entityData.npcStructures.get(tileKey);
+  }
+
+  getAllNPCs(): Map<string, VillageStructure> {
+    return this.entityData.npcStructures;
+  }
+
   hasModifications(): boolean {
     return this.entityData.modifiedTiles.size > 0 ||
            this.entityData.trees.size > 0 ||
-           this.entityData.cactus.size > 0;
+           this.entityData.cactus.size > 0 ||
+           this.entityData.npcStructures.size > 0;
   }
 }

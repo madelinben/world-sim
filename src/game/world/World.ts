@@ -5,6 +5,8 @@ import { SpriteGenerator } from '../ui/SpriteGenerator';
 import type { AnimationSystem } from '../systems/AnimationSystem';
 import type { Position } from '../engine/types';
 import type { InventoryItem } from '../entities/inventory/Inventory';
+import { NPC } from '../entities/npc/NPC';
+import type { VillageStructure } from './VillageGenerator';
 
 export class World {
     public readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
@@ -19,10 +21,18 @@ export class World {
     private lastViewWidth = 0;
     private lastViewHeight = 0;
     private cacheValid = false;
+    private camera: Camera;
 
-    constructor(generator?: WorldGenerator) {
+    // Track NPCs that want to move to specific tiles this update cycle
+    private movementIntentions = new Map<string, NPC>(); // tileKey -> NPC that wants to move there
+
+    // Track current player position for collision detection
+    private currentPlayerPosition?: Position;
+
+    constructor(camera: Camera, generator?: WorldGenerator) {
         this.generator = generator ?? new WorldGenerator();
         this.spriteGenerator = new SpriteGenerator();
+        this.camera = camera;
     }
 
     public setAnimationSystem(animationSystem: AnimationSystem): void {
@@ -31,6 +41,61 @@ export class World {
 
     public invalidateCache(): void {
         this.cacheValid = false;
+    }
+
+    private moveNPCBetweenTiles(npcStructure: VillageStructure, oldTileX: number, oldTileY: number, newTileX: number, newTileY: number): void {
+        // Get the chunks for old and new positions
+        const oldChunk = this.getOrCreateChunk(Math.floor(oldTileX / World.CHUNK_SIZE), Math.floor(oldTileY / World.CHUNK_SIZE));
+        const newChunk = this.getOrCreateChunk(Math.floor(newTileX / World.CHUNK_SIZE), Math.floor(newTileY / World.CHUNK_SIZE));
+
+        // Calculate local positions within chunks (handle negative coordinates)
+        const oldLocalX = ((oldTileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const oldLocalY = ((oldTileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const newLocalX = ((newTileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const newLocalY = ((newTileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+        // Check if the new tile is available (excluding the moving NPC)
+        const isOccupied = newChunk.isTileOccupied(newLocalX, newLocalY, npcStructure.npc);
+
+        if (isOccupied) {
+            // Cannot move to occupied tile - revert NPC position
+            if (npcStructure.npc) {
+                npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+            }
+            return;
+        }
+
+        // If moving between different chunks, handle cross-chunk movement
+        if (oldChunk !== newChunk) {
+            // Remove from old chunk
+            oldChunk.removeNPC(oldLocalX, oldLocalY);
+
+            // Add to new chunk
+            const success = newChunk.addNPC(newLocalX, newLocalY, npcStructure);
+            if (!success) {
+                // Failed to add to new chunk - revert position
+                if (npcStructure.npc) {
+                    npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                    npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                }
+                // Try to add back to old chunk
+                oldChunk.addNPC(oldLocalX, oldLocalY, npcStructure);
+            }
+        } else {
+            // Moving within same chunk
+            const success = oldChunk.moveNPC(oldLocalX, oldLocalY, newLocalX, newLocalY);
+            if (!success) {
+                // Failed to move within chunk - revert position
+                if (npcStructure.npc) {
+                    npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                    npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                }
+            }
+        }
+
+        // Invalidate cache since tile occupancy changed
+        this.invalidateCache();
     }
 
     public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
@@ -60,8 +125,76 @@ export class World {
         }
     }
 
-        private updateVillageStructures(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
-        // Update POI and NPC animations for visible tiles
+    private updateVillageStructures(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
+        if (!playerPosition) return;
+
+        // Store current player position for collision detection
+        this.currentPlayerPosition = playerPosition;
+
+        // Clear movement intentions from previous update cycle
+        this.movementIntentions.clear();
+
+        // Calculate view radius in tiles based on camera dimensions
+        // Add buffer for smooth transitions
+        const camera = this.camera;
+        const tileSize = WorldGenerator.TILE_SIZE;
+        const viewWidthInTiles = Math.ceil(camera.viewWidth / tileSize) + 5; // +5 tile buffer
+        const viewHeightInTiles = Math.ceil(camera.viewHeight / tileSize) + 5; // +5 tile buffer
+        const viewRadiusInTiles = Math.max(viewWidthInTiles, viewHeightInTiles) / 2;
+
+        // Collect all NPCs and village buildings for flocking algorithm
+        const allNPCs: NPC[] = [];
+        const allVillageBuildings: Position[] = [];
+        const npcsToUpdate: { npc: NPC; structure: VillageStructure; tileX: number; tileY: number }[] = [];
+
+        // First pass: collect all NPCs and village buildings from ALL chunks (not just visible)
+        for (const chunk of this.chunks.values()) {
+            // Get NPCs from chunk's tracking system
+            for (const [tileKey, structure] of chunk.getAllNPCs()) {
+                if (structure.npc && !structure.npc.isDead()) {
+                    allNPCs.push(structure.npc);
+
+                    // Check if NPC is within update radius of player
+                    const npcDistance = Math.sqrt(
+                        Math.pow(structure.npc.position.x - playerPosition.x, 2) +
+                        Math.pow(structure.npc.position.y - playerPosition.y, 2)
+                    ) / this.TILE_SIZE;
+
+                    if (npcDistance <= viewRadiusInTiles) {
+                        const tileCoords = tileKey.split(',').map(Number);
+                        if (tileCoords.length === 2) {
+                            npcsToUpdate.push({
+                                npc: structure.npc,
+                                structure,
+                                tileX: chunk.chunkX * World.CHUNK_SIZE + tileCoords[0]!,
+                                tileY: chunk.chunkY * World.CHUNK_SIZE + tileCoords[1]!
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Log NPCs only occasionally to avoid spam
+        if (allNPCs.length > 0 && Math.random() < 0.01) { // 1% chance to log
+            console.log(`[DEBUG] Found ${allNPCs.length} total NPCs, ${npcsToUpdate.length} NPCs to update within ${viewRadiusInTiles} tiles of player at (${Math.round(playerPosition.x/16)},${Math.round(playerPosition.y/16)})`);
+        }
+
+        // Collect village buildings from visible tiles
+        for (const [tileKey, tile] of this.visibleTileCache) {
+            if (tile.villageStructures) {
+                for (const structure of tile.villageStructures) {
+                    if (structure.poi && (
+                        structure.type.includes('market') ||
+                        structure.type.includes('windmill')
+                    )) {
+                        allVillageBuildings.push(structure.position);
+                    }
+                }
+            }
+        }
+
+        // Second pass: update POIs (from visible tiles) and NPCs (from camera culling)
         for (const [tileKey, tile] of this.visibleTileCache) {
             if (tile.villageStructures) {
                 for (const structure of tile.villageStructures) {
@@ -69,15 +202,89 @@ export class World {
                     if (structure.poi) {
                         structure.poi.update(deltaTime);
                     }
-
-                    // Update NPC animations and AI (animals, etc.)
-                    if (structure.npc && !structure.npc.isDead()) {
-                        // Use provided player position and inventory, or defaults
-                        const pos = playerPosition ?? { x: 0, y: 0 };
-                        const inventory = playerInventory ?? [];
-                        structure.npc.update(deltaTime, pos, inventory);
-                    }
                 }
+            }
+        }
+
+        // First phase: Collect movement intentions from all NPCs
+        for (const npcData of npcsToUpdate) {
+            const { npc } = npcData;
+            const pos = playerPosition ?? { x: 0, y: 0 };
+            const inventory = playerInventory ?? [];
+
+            // Get nearby NPCs within reasonable distance (10 tiles)
+            const nearbyNPCs = allNPCs.filter(otherNPC => {
+                if (otherNPC === npc) return false;
+                const distance = Math.sqrt(
+                    Math.pow(otherNPC.position.x - npc.position.x, 2) +
+                    Math.pow(otherNPC.position.y - npc.position.y, 2)
+                ) / 16;
+                return distance <= 10; // Within 10 tiles
+            });
+
+            // Get movement intention for this NPC
+            const movementIntention = npc.getMovementIntention(pos, inventory, nearbyNPCs);
+            if (movementIntention) {
+                const targetTileX = Math.floor(movementIntention.x / this.TILE_SIZE);
+                const targetTileY = Math.floor(movementIntention.y / this.TILE_SIZE);
+                const targetTileKey = `${targetTileX},${targetTileY}`;
+                this.movementIntentions.set(targetTileKey, npc);
+            }
+        }
+
+        // Debug log movement intentions occasionally
+        if (this.movementIntentions.size > 0 && Math.random() < 0.02) { // 2% chance to log
+            console.log(`[MOVEMENT INTENTIONS] Collected ${this.movementIntentions.size} intentions:`,
+                Array.from(this.movementIntentions.entries()).map(([key, npc]) =>
+                    `${npc.type}@(${Math.floor(npc.position.x/16)},${Math.floor(npc.position.y/16)}) → ${key}`
+                ).join(', ')
+            );
+        }
+
+        // Second phase: Update NPCs with movement intentions registered
+        for (const npcData of npcsToUpdate) {
+            const { npc, structure, tileX, tileY } = npcData;
+            const pos = playerPosition ?? { x: 0, y: 0 };
+            const inventory = playerInventory ?? [];
+
+            // Get nearby NPCs within reasonable distance (10 tiles)
+            const nearbyNPCs = allNPCs.filter(otherNPC => {
+                if (otherNPC === npc) return false;
+                const distance = Math.sqrt(
+                    Math.pow(otherNPC.position.x - npc.position.x, 2) +
+                    Math.pow(otherNPC.position.y - npc.position.y, 2)
+                ) / 16;
+                return distance <= 10; // Within 10 tiles
+            });
+
+            // Get nearby village buildings within reasonable distance (15 tiles)
+            const nearbyBuildings = allVillageBuildings.filter(building => {
+                const distance = Math.sqrt(
+                    Math.pow(building.x - npc.position.x, 2) +
+                    Math.pow(building.y - npc.position.y, 2)
+                ) / 16;
+                return distance <= 15; // Within 15 tiles
+            });
+
+            // Store old position for movement tracking
+            const oldTileX = Math.floor(npc.position.x / this.TILE_SIZE);
+            const oldTileY = Math.floor(npc.position.y / this.TILE_SIZE);
+
+            npc.update(deltaTime, pos, inventory, nearbyNPCs, nearbyBuildings);
+
+            // Check if NPC moved to a different tile
+            const newTileX = Math.floor(npc.position.x / this.TILE_SIZE);
+            const newTileY = Math.floor(npc.position.y / this.TILE_SIZE);
+
+            if (oldTileX !== newTileX || oldTileY !== newTileY) {
+                // NPC moved to a different tile, update tile occupancy
+                console.log(`NPC ${npc.type} moving from tile (${oldTileX},${oldTileY}) to (${newTileX},${newTileY})`);
+                this.moveNPCBetweenTiles(structure, oldTileX, oldTileY, newTileX, newTileY);
+            }
+
+            // Handle breeding requests
+            if (npc.breedingRequest) {
+                this.handleBreedingRequest(npc);
             }
         }
     }
@@ -133,7 +340,7 @@ export class World {
         }
     }
 
-                    private renderTile(ctx: CanvasRenderingContext2D, tile: Tile, x: number, y: number): void {
+    private renderTile(ctx: CanvasRenderingContext2D, tile: Tile, x: number, y: number): void {
         const tileX = x - (this.TILE_SIZE / 2);
         const tileY = y - (this.TILE_SIZE / 2);
 
@@ -163,8 +370,6 @@ export class World {
             }
         }
     }
-
-
 
     public getTileColor(type: TileType): string {
         switch (type) {
@@ -239,18 +444,46 @@ export class World {
     }
 
     private registerChunkVillageStructures(chunk: Chunk, tiles: Tile[][]): void {
-        if (!this.animationSystem) return;
-
         for (const row of tiles) {
             for (const tile of row) {
                 if (tile.villageStructures) {
+                    let npcCount = 0;
+                    let poiCount = 0;
+
+                    // Count entities on this tile
+                    for (const structure of tile.villageStructures) {
+                        if (structure.npc) npcCount++;
+                        if (structure.poi) poiCount++;
+                    }
+
+                    // Warn if multiple entities on same tile (violation of one-entity-per-tile rule)
+                    if (npcCount + poiCount > 1) {
+                        console.error(`[ERROR] Tile (${tile.x},${tile.y}) has ${npcCount} NPCs and ${poiCount} POIs - violates one-entity-per-tile rule!`);
+                        console.error(`[ERROR] Structures:`, tile.villageStructures.map(s => s.type));
+                    }
+
                     for (const structure of tile.villageStructures) {
                         if (structure.npc) {
-                            // Register NPCs with animation system for movement and rendering
-                            const tileKey = `${tile.x},${tile.y}`;
-                            // Note: This would require adding NPC support to AnimationSystem
-                            // For now, we'll handle NPC rendering in the POI render method
-                            console.log(`Village NPC ${structure.type} registered at ${tileKey}`);
+                            // Set up collision callback for NPC
+                            structure.npc.setTileCollisionCallback((position: Position) => {
+                                const tileX = Math.floor(position.x / this.TILE_SIZE);
+                                const tileY = Math.floor(position.y / this.TILE_SIZE);
+                                return this.isTileOccupiedByOthers(tileX, tileY, structure.npc);
+                            });
+
+                            // Set up speculative movement callback for deadlock resolution
+                            structure.npc.setSpeculativeMovementCallback((position: Position, movingNPC: NPC) => {
+                                const tileX = Math.floor(position.x / this.TILE_SIZE);
+                                const tileY = Math.floor(position.y / this.TILE_SIZE);
+                                return this.checkSpeculativeMovement(tileX, tileY, movingNPC);
+                            });
+
+                            // Register NPCs in chunk's NPC tracking system only if it's the only entity on the tile
+                            const localX = ((tile.x % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+                            const localY = ((tile.y % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+                            // Force register NPC in chunk tracking system
+                            chunk.getAllNPCs().set(`${localX},${localY}`, structure);
                         }
                         if (structure.poi) {
                             // POIs handle their own animation updates
@@ -323,5 +556,187 @@ export class World {
             }
         }
         return chunks;
+    }
+
+    private isTileOccupiedByOthers(tileX: number, tileY: number, movingNPC?: NPC): boolean {
+        const chunkX = Math.floor(tileX / World.CHUNK_SIZE);
+        const chunkY = Math.floor(tileY / World.CHUNK_SIZE);
+        const localX = ((tileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const localY = ((tileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+        const chunk = this.chunks.get(this.chunkKey(chunkX, chunkY));
+        if (!chunk) return false; // Assume unloaded chunks are passable
+
+        const tile = chunk.getTile(localX, localY);
+        if (!tile) return true; // Treat invalid tiles as occupied
+
+        // Check for impassable terrain
+        if (tile.value === 'DEEP_WATER' || tile.value === 'STONE') {
+            return true;
+        }
+
+        // Check for living trees
+        if (tile.trees?.some(tree => tree.getHealth() > 0)) {
+            return true;
+        }
+
+        // Check for living cactus
+        if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
+            return true;
+        }
+
+        // Check for village structures (POIs and NPCs), excluding the moving NPC
+        if (tile.villageStructures) {
+            for (const structure of tile.villageStructures) {
+                // Check for impassable POIs
+                if (structure.poi && !structure.poi.passable) {
+                    return true;
+                }
+                // Check for living NPCs (excluding the one we're checking for)
+                if (structure.npc && !structure.npc.isDead() && structure.npc !== movingNPC) {
+                    return true;
+                }
+            }
+        }
+
+        // Check if tile is occupied by the player
+        if (this.currentPlayerPosition) {
+            const playerTileX = Math.floor(this.currentPlayerPosition.x / this.TILE_SIZE);
+            const playerTileY = Math.floor(this.currentPlayerPosition.y / this.TILE_SIZE);
+            if (playerTileX === tileX && playerTileY === tileY) {
+                return true; // Player is on this tile
+            }
+        }
+
+        return false;
+    }
+
+    private checkSpeculativeMovement(tileX: number, tileY: number, movingNPC: NPC): boolean {
+        // Find the NPC currently occupying the target tile
+        const chunkX = Math.floor(tileX / World.CHUNK_SIZE);
+        const chunkY = Math.floor(tileY / World.CHUNK_SIZE);
+        const localX = ((tileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+        const localY = ((tileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+        const chunk = this.chunks.get(this.chunkKey(chunkX, chunkY));
+        if (!chunk) return false;
+
+        const tile = chunk.getTile(localX, localY);
+        if (!tile?.villageStructures) return false;
+
+        // Find the NPC occupying this tile
+        let occupyingNPC: NPC | null = null;
+        for (const structure of tile.villageStructures) {
+            if (structure.npc && !structure.npc.isDead() && structure.npc !== movingNPC) {
+                occupyingNPC = structure.npc;
+                break;
+            }
+        }
+
+        if (!occupyingNPC) return false;
+
+        // Get current positions
+        const movingNPCCurrentX = Math.floor(movingNPC.position.x / this.TILE_SIZE);
+        const movingNPCCurrentY = Math.floor(movingNPC.position.y / this.TILE_SIZE);
+        const movingNPCCurrentKey = `${movingNPCCurrentX},${movingNPCCurrentY}`;
+
+        const occupyingNPCCurrentX = Math.floor(occupyingNPC.position.x / this.TILE_SIZE);
+        const occupyingNPCCurrentY = Math.floor(occupyingNPC.position.y / this.TILE_SIZE);
+        const occupyingNPCCurrentKey = `${occupyingNPCCurrentX},${occupyingNPCCurrentY}`;
+
+        // Check if the NPCs are trying to swap positions (bidirectional)
+        const intendedNPCForMovingTile = this.movementIntentions.get(movingNPCCurrentKey);
+        const intendedNPCForOccupyingTile = this.movementIntentions.get(`${tileX},${tileY}`);
+
+        if (intendedNPCForMovingTile === occupyingNPC && intendedNPCForOccupyingTile === movingNPC) {
+            console.log(`[SPECULATIVE] Allowing bidirectional swap between ${movingNPC.type} at (${movingNPCCurrentX},${movingNPCCurrentY}) and ${occupyingNPC.type} at (${tileX},${tileY})`);
+            return true; // Allow the swap
+        }
+
+        // Check if occupying NPC has any movement intention (wants to move anywhere)
+        let occupyingNPCWantsToMove = false;
+        for (const [intentionTileKey, intentionNPC] of this.movementIntentions) {
+            if (intentionNPC === occupyingNPC && intentionTileKey !== occupyingNPCCurrentKey) {
+                occupyingNPCWantsToMove = true;
+                console.log(`[SPECULATIVE] ${occupyingNPC.type} at (${tileX},${tileY}) wants to move to ${intentionTileKey}, allowing ${movingNPC.type} to take their place`);
+                break;
+            }
+        }
+
+        if (occupyingNPCWantsToMove) {
+            return true;
+        }
+
+        // Additional debug logging
+        if (Math.random() < 0.01) { // Only log occasionally to avoid spam
+            console.log(`[SPECULATIVE] Cannot resolve: ${movingNPC.type} wants (${tileX},${tileY}) occupied by ${occupyingNPC.type}, no movement intention found`);
+            console.log(`[DEBUG] Movement intentions:`, Array.from(this.movementIntentions.entries()).map(([key, npc]) => `${key}:${npc.type}`));
+        }
+
+        return false; // Cannot speculative move
+    }
+
+    private handleBreedingRequest(npc: NPC): void {
+        const request = npc.breedingRequest;
+        if (!request) return;
+
+        try {
+            // Create new NPC offspring
+            const offspring = new NPC({
+                type: request.offspringType,
+                position: request.offspringPosition,
+                aggressive: false
+            });
+
+            // Find appropriate chunk and tile for the offspring
+            const offspringTileX = Math.floor(request.offspringPosition.x / this.TILE_SIZE);
+            const offspringTileY = Math.floor(request.offspringPosition.y / this.TILE_SIZE);
+            const chunkX = Math.floor(offspringTileX / World.CHUNK_SIZE);
+            const chunkY = Math.floor(offspringTileY / World.CHUNK_SIZE);
+            const localX = ((offspringTileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+            const localY = ((offspringTileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+
+            const chunk = this.getOrCreateChunk(chunkX, chunkY);
+            const tile = chunk.getTile(localX, localY);
+
+            if (tile && !this.isTileOccupiedByOthers(offspringTileX, offspringTileY)) {
+                // Create village structure for the offspring
+                const offspringStructure = {
+                    type: request.offspringType,
+                    position: request.offspringPosition,
+                    npc: offspring
+                };
+
+                // Set up collision callback for offspring NPC
+                offspring.setTileCollisionCallback((position: Position) => {
+                    const tileX = Math.floor(position.x / this.TILE_SIZE);
+                    const tileY = Math.floor(position.y / this.TILE_SIZE);
+                    return this.isTileOccupiedByOthers(tileX, tileY, offspring);
+                });
+
+                // Set up speculative movement callback for offspring NPC
+                offspring.setSpeculativeMovementCallback((position: Position, movingNPC: NPC) => {
+                    const tileX = Math.floor(position.x / this.TILE_SIZE);
+                    const tileY = Math.floor(position.y / this.TILE_SIZE);
+                    return this.checkSpeculativeMovement(tileX, tileY, movingNPC);
+                });
+
+                // Add to tile's village structures
+                tile.villageStructures = tile.villageStructures ?? [];
+                tile.villageStructures.push(offspringStructure);
+
+                // Register in chunk's NPC tracking system
+                chunk.getAllNPCs().set(`${localX},${localY}`, offspringStructure);
+
+                console.log(`🐣 [BREEDING SUCCESS] New ${request.offspringType} born at tile (${offspringTileX},${offspringTileY})! Parents: ${npc.type} and ${request.partner.type}`);
+            } else {
+                console.log(`🚫 [BREEDING FAILED] No space available for offspring at tile (${offspringTileX},${offspringTileY})`);
+            }
+        } catch (error) {
+            console.error(`❌ [BREEDING ERROR] Failed to create offspring:`, error);
+        }
+
+        // Clear the breeding request
+        npc.breedingRequest = undefined;
     }
 }

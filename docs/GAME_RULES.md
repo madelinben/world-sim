@@ -8,6 +8,43 @@
 - **Procedural Generation**: Uses simplex noise with configurable seeds
 - **Grid Alignment**: Perfect tile grid with 1px black borders
 
+### **Three-Layer Tile Rendering**
+Each tile consists of three distinct visual layers rendered in order:
+
+1. **Base Color Layer** (Bottom)
+   - Solid color square representing the tile type (GRASS, WATER, etc.)
+   - 14x14 pixels with 1px black border gap
+   - Used for quick terrain identification
+
+2. **Background Sprite Layer** (Middle)
+   - Textured sprite overlay for visual detail (e.g., grass variants, water textures)
+   - 16x16 pixel sprites from sprite sheets (TexturedGrass.png, Shore.png)
+   - Optional - not all tile types have background sprites
+   - GRASS tiles have 6 variants mapped deterministically by coordinates
+
+3. **Occupied Entity Layer** (Top)
+   - Interactive game objects (NPCs, POIs, structures)
+   - Animated sprites (animals, windmills, trees)
+   - Only one entity per tile allowed
+   - Rendered on top with proper collision detection
+
+### **Tile Data Structure**
+```typescript
+interface Tile {
+  // Base tile properties
+  value: TileType;           // GRASS, WATER, etc. (determines base color)
+  spriteId?: string;         // Background sprite path (e.g., TexturedGrass.png#1,0)
+
+  // Occupied entities (only one type per tile)
+  trees?: Tree[];            // Animated tree structures
+  cactus?: Cactus[];         // Animated cactus structures
+  villageStructures?: {      // Village POIs and NPCs
+    poi?: POI;               // Buildings, chests, etc.
+    npc?: NPC;               // Animals, traders, monsters
+  }[];
+}
+```
+
 ### **Tile Types**
 | Tile Type | Description | Movement | Color |
 |-----------|-------------|----------|-------|
@@ -57,11 +94,13 @@ Generated based on temperature and humidity:
 - High humidity: GRASS
 - Low humidity: SAND (70% chance)
 
-### **Sprite System**
+### **Background Sprite System**
 - **Grass Variants**: 6 different TexturedGrass.png variants (0-5) mapped to 3×2 grid
-- **Water Tiles**: Shore.png sprites for shallow/deep water
-- **Sand Tiles**: Shore.png sprite for sand
+- **Water Tiles**: Shore.png sprites for shallow/deep water (variants 2 and 4)
+- **Sand Tiles**: Shore.png sprite for sand (variant 0)
 - **Automatic Assignment**: Tiles automatically get sprite IDs based on coordinates
+- **Deterministic Mapping**: Same coordinates always get same grass variant
+- **Performance**: Background sprites render behind all entities
 
 ## 🚶 **Movement System**
 
@@ -89,6 +128,26 @@ Generated based on temperature and humidity:
 - **Player-Centered**: Player always renders at screen center
 - **Mouse Drag**: Click and drag to move camera view
 - **Tile Alignment**: World grid aligns perfectly with player position
+
+### **NPC Movement System**
+- **Tile-Based Movement**: NPCs move between 16x16 pixel tiles like the player
+- **Fast Movement Cooldown**: 0.6 seconds between normal moves (increased from 1.0s)
+- **Quick Retry**: 0.15 seconds retry when blocked (reduced from 0.3s)
+- **High Activity**: 80% chance to attempt movement each cycle for active animals
+- **Anti-Stuck Mechanism**: Force movement after 5 seconds of inactivity
+- **Reduced Spacing Restrictions**: 40% avoidance of adjacent tiles (down from 70%)
+- **Staggered Timing**: Random initial delays prevent synchronized movement
+- **Movement Tracking**: System monitors and prevents prolonged idle periods
+- **Direction Consistency**: NPCs only change facing direction when actually moving to new tiles
+- **Tile Validation**: Movement only occurs when successfully changing tile coordinates
+- **Negative Coordinate Support**: Fixed coordinate calculation issues for animals in negative tile positions
+- **Player Collision Prevention**: NPCs cannot move to tiles occupied by the player
+- **Deadlock Resolution System**: Two-phase movement with speculative coordination to prevent clustering deadlocks
+  - **Movement Intention Collection**: All NPCs declare intended movements before any actual movement
+  - **Coordinated Swapping**: Animals can swap positions when both want each other's tiles
+  - **Chain Movement**: If one animal wants to move away, others can coordinate to take their place
+  - **Deterministic Behavior**: Movement decisions cached for 100ms to ensure consistent intention-execution matching
+  - **Escape Mechanism**: Long-stuck animals (8+ seconds) get increased randomness to break deadlocks
 
 ## 🎒 **Inventory System**
 
@@ -235,25 +294,43 @@ Generated based on temperature and humidity:
 ## 🏘️ **Village Generation System**
 
 ### **Village Rarity & Placement**
-- **Noise-Based Placement**: Uses dedicated village noise map with world seed
-- **Village Rarity**: Villages spawn with 0.85+ noise threshold (extremely rare)
-- **Village Radius**: 20 tiles (320 pixels) radius for village structures
+- **Noise-Based Grid System**: Uses dedicated village noise map with world seed for deterministic placement
+- **Village Grid Areas**: 50x50 tile grid areas (800x800 pixels) - only one village per grid area
+- **Village Center Selection**: Within each qualifying grid area, the tile with highest village noise value (>0.85 threshold) is selected as village center
 - **Biome Restriction**: Villages only spawn on GRASS tiles
+- **One Entity Per Tile**: Strict enforcement prevents multiple structures on same tile
+- **Deterministic Placement**: Same seed always generates villages in same locations
 
 ### **Village Layout**
 | Structure | Position | Spawn Rate | Requirements |
 |-----------|----------|------------|--------------|
-| **Windmill** | Village center | 1 per village | GRASS tile, animated (2-second cycle) |
-| **Food Market** | 8 tiles east of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Butcher Market** | 8 tiles west of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Armory Market** | 8 tiles south of windmill | 1 per village | Valid terrain (not water/stone) |
-| **Cloth Market** | 8 tiles north of windmill | 1 per village | Valid terrain (not water/stone) |
+| **Windmill** | Village center (best noise tile in grid area) | 1 per grid area | GRASS tile, animated (2-second cycle) |
+| **Food Market** | Exactly 8 tiles east of windmill | 1 per village | Valid terrain (not water/stone) |
+| **Butcher Market** | Exactly 8 tiles west of windmill | 1 per village | Valid terrain (not water/stone) |
+| **Armory Market** | Exactly 8 tiles south of windmill | 1 per village | Valid terrain (not water/stone) |
+| **Cloth Market** | Exactly 8 tiles north of windmill | 1 per village | Valid terrain (not water/stone) |
 
 ### **Village Animals**
-- **Quantity**: 6 animals per village
+- **Quantity**: Optimized spawn density (12 strategic positions around village centers)
 - **Types**: Chicken, Pig, Sheep (random selection)
-- **Placement**: 4-6 tiles from village center in strategic positions
+- **Placement**: 5-7 tiles from village center with strategic spacing to prevent clustering
+- **Enhanced Anti-Clustering**: 2-tile minimum spacing radius between all animals
+- **Multi-Layer Spacing Checks**:
+  - VillageGenerator: Checks 2-tile radius for existing animals
+  - Chunk: Validates spacing before adding NPCs
+  - WorldGenerator: Enhanced occupancy tracking during generation
+- **Movement Space**: Each animal requires at least 3 adjacent passable tiles
 - **Terrain Restriction**: Cannot spawn on DEEP_WATER or STONE (can spawn in SHALLOW_WATER)
+- **One Entity Per Tile**: Only one structure/NPC per tile (strict enforcement)
+
+### **Village Generation Process**
+1. **Grid Area Evaluation**: Each 50x50 tile area is evaluated for village potential
+2. **Best Tile Selection**: Within qualifying areas, the tile with highest village noise value becomes village center
+3. **Windmill Placement**: Single windmill placed at selected center tile
+4. **Market Distribution**: Markets placed exactly 8 tiles away in cardinal directions during tile-by-tile generation
+5. **Animal Placement**: Village animals placed at predetermined offsets (±4, ±6 tiles) from village center during tile-by-tile generation
+6. **Conflict Prevention**: Each tile is processed individually, ensuring no two entities occupy the same tile
+7. **Area Marking**: Grid area marked as occupied to prevent duplicate villages
 
 ### **Biome Restrictions for Structures**
 - **POI Structures** (windmills, markets): Cannot be placed on DEEP_WATER, SHALLOW_WATER, or STONE tiles
@@ -308,14 +385,15 @@ Generated based on temperature and humidity:
 #### **Underground Structures**
 | Structure | Spawn Rate | Requirements | Rarity |
 |-----------|------------|--------------|--------|
-| **Mine Entrance** | 70% of underground spawns | STONE tiles, mine noise > 0.95 | Extremely rare |
-| **Dungeon Entrance** | 30% of underground spawns | STONE tiles, mine noise > 0.95 | Extremely rare |
+| **Mine Entrance** | 70% of underground spawns | STONE tiles, mine noise > 0.98 | Extremely rare |
+| **Dungeon Entrance** | 30% of underground spawns | STONE tiles, mine noise > 0.98 | Extremely rare |
 
 #### **Generation Rules**
-- **Noise Threshold**: 0.95+ (even higher than villages for extreme rarity)
+- **Noise Threshold**: 0.98+ (even higher than villages 0.85 for extreme rarity)
 - **Noise Frequency**: 3x frequency for more variation
 - **Biome Restriction**: Only spawn on STONE tiles
 - **Functionality**: Teleport player underground when interacted with
+- **Spacing**: Minimum 15 tiles between underground structures
 
 ## 🐾 **NPC & Animal System**
 
@@ -328,13 +406,49 @@ Generated based on temperature and humidity:
 
 ### **NPC Movement & AI**
 - **Detection Range**: 5 tiles radius
-- **Wheat Attraction**: Animals follow players with wheat in inventory
-- **Wandering**: Random movement within spawn area
-- **Fleeing**: Non-aggressive NPCs flee when attacked
+- **Wheat Attraction**: Animals follow players with wheat in inventory (5-tile radius)
+- **Dynamic Same-Type Attraction**: Variable attraction rates (6-40%) based on local animal density
+- **Tile-Based Movement**: NPCs move one tile at a time with 0.6-second cooldowns
+- **Movement Logic**: Direction-based movement towards/away from targets
+- **Flexible Spacing**: Animals can move adjacent to each other, only avoiding overcrowded tiles (2+ neighbors)
+- **Collision Avoidance**: NPCs avoid tiles occupied by other NPCs
+- **Personal Space System**: Animals actively escape when surrounded by 3+ same-type animals
+- **Exploration Behavior**: 25% chance for random exploration overriding attraction
+- **Crowded Repulsion**: Animals move away from cluster centers when feeling crowded
+- **Fleeing**: Non-aggressive NPCs flee when attacked or when avoiding monsters
 - **Health Bars**: Visible when damaged
-- **Movement Speed**: Slower than player, realistic animal movement
-- **Directional Animation**: 4 directions × 4 animation frames per direction
+- **Movement Restrictions**: NPCs stay within 5 tiles of spawn point, 10 tiles maximum
+- **Directional Animation**: 4 directions × 4 animation frames per direction (1-second cycle)
 - **AI States**: idle, wandering, following, fleeing, attacking, dead
+- **Camera-Based Optimization**: Only NPCs within camera view + 5-tile buffer are updated for performance
+- **Continuous Updates**: NPCs updated every frame for smooth movement and animation
+- **Reduced Logging**: Only logs successful movements and important errors to avoid console spam
+
+### **Tile-Based Movement Rules**
+- **One Entity Per Tile**: Only one structure, POI, or NPC can occupy a single tile at any time
+- **Collision Detection**: NPCs check tile availability before moving to new positions
+- **Spacing Preferences**: Animals and friendly NPCs prefer tiles that maintain 1-tile spacing from other NPCs
+- **Fallback Movement**: If no spaced tiles available, NPCs fall back to basic collision avoidance
+- **Movement Blocking**: NPCs cannot move to tiles occupied by:
+  - Living trees or cactus (health > 0)
+  - Impassable POIs (markets, windmills, chests)
+  - Other living NPCs
+  - Impassable terrain (DEEP_WATER, STONE)
+- **Direction Updates**: NPC facing direction is updated before moving to new tile
+- **Movement Validation**: If target tile is occupied, NPC velocity is reduced to prevent jittering
+- **Chunk-Based Tracking**: NPC positions are tracked per chunk for efficient collision detection
+
+### **Animal Breeding System**
+- **Breeding Conditions**: Two animals of the same species must be adjacent and facing each other
+- **Species Compatibility**: Only identical animal types can breed (chicken + chicken, pig + pig, sheep + sheep)
+- **Breeding Cooldown**: 30-second cooldown between breeding attempts per animal
+- **Facing Requirement**: Both animals must be facing directly towards each other
+- **Offspring Placement**: New animals spawn in adjacent tiles near the parents
+- **Real-Time Breeding**: Breeding attempts occur during normal game updates
+- **Breeding Success**: Successful breeding creates a new NPC of the same type with full health
+- **Breeding Failure**: If no suitable adjacent tile is available, breeding fails but animals can try again after cooldown
+- **Population Growth**: Allows for dynamic animal population expansion in villages and wild areas
+- **Visual Feedback**: Console logs successful breeding events with parent locations
 
 ### **Animation System for NPCs**
 - **Directional Sprites**: 4 directions (up, down, left, right)
@@ -344,7 +458,7 @@ Generated based on temperature and humidity:
 - **State-Based**: Animation only when moving or performing actions
 
 ### **Wild Animal Generation**
-- **Spawn Rate**: Animal noise > 0.95 (very rare)
+- **Spawn Rate**: Animal noise > 0.85 (increased from 0.95 for more common spawns)
 - **Biome**: GRASS tiles only (outside villages)
 - **Types**: Chicken, Pig, Sheep with full AI and animations
 - **Behavior**: Same as village animals but more scattered
@@ -381,14 +495,16 @@ Generated based on temperature and humidity:
 ## 🎨 **Visual System**
 
 ### **Rendering Order**
-1. **Black Background**: Canvas filled with black (#000000)
-2. **Tile Colors**: 14x14 colored squares (2px border gap)
-3. **Tile Sprites**: TexturedGrass.png variants and water sprites
-4. **Player**: Red 10x10 square at screen center (renders behind structures)
-5. **Tree Sprites**: 16x16 tree sprites on forest/grass tiles
-6. **Cactus Sprites**: 16x16 cactus sprites on sand tiles
-7. **Village Structures**: POI buildings and NPC animals
-8. **Inventory UI**: Right-side inventory slots (front-most)
+1. **Black Background**: Canvas filled with black (#000000) for tile borders
+2. **Base Color Layer**: 14x14 colored squares representing tile types
+3. **Background Sprite Layer**: TexturedGrass.png variants, Shore.png textures
+4. **Player**: Red 10x10 square at screen center (renders behind entities)
+5. **Occupied Entity Layer**: Structures and NPCs on tiles
+   - Tree Sprites: 16x16 tree sprites with growth animations
+   - Cactus Sprites: 16x16 cactus sprites with variant animations
+   - POI Buildings: Markets, windmills, chests (static/animated)
+   - NPC Animals: Walking animals with directional animations
+6. **Inventory UI**: Right-side inventory slots (front-most layer)
 
 ### **Animation System**
 - **Windmill Animation**: 3-frame animation (frames 3, 4, 5) with 2-second cycle
@@ -435,6 +551,25 @@ Currently a **survival/resource gathering game** with:
 - **Living Villages**: Animated windmills and walking animals create vibrant settlements
 
 ## 🔧 **Technical Implementation**
+
+### **Tile-Based Movement System**
+- **Movement Cooldown**: 1.5-second delay between moves (slower than player's 120ms)
+- **Movement Logic**: NPCs choose one adjacent tile based on current state:
+  - **Following**: Move towards player (when has wheat)
+  - **Fleeing**: Move away from player/monsters (when damaged)
+  - **Attacking**: Move towards player (monsters only)
+  - **Wandering**: Random adjacent tile (default state)
+- **Collision Detection**: NPCs check for occupied tiles and avoid other NPCs
+- **Boundary Enforcement**: 5-tile wandering radius, 10-tile maximum from spawn
+- **Tile Selection**: Prioritizes movement based on direction with largest distance component
+- **Performance**: NPCs updated within 35-tile radius of player (matches camera view)
+
+### **Chunk-Based Entity Management**
+- **NPC Tracking**: Each chunk maintains a map of NPCs by tile coordinates
+- **Cross-Chunk Movement**: NPCs can move between chunks with proper state transfer
+- **Collision Detection**: Real-time tile occupancy checking prevents entity overlap
+- **Entity Registration**: NPCs automatically registered in chunk system during village generation
+- **Memory Efficiency**: Only loaded chunks track entity positions
 
 ### **Seed-Based Generation**
 - **Deterministic World**: Same seed always generates identical worlds
@@ -484,6 +619,8 @@ Currently a **survival/resource gathering game** with:
 - **Change Detection**: Only update when camera/player moves
 - **Animation System**: Efficient structure rendering and updates
 - **Chunk-Based Loading**: 16x16 tile chunks for efficient world streaming
+- **Camera-Based NPC Updates**: NPCs only updated within camera view + 5-tile buffer (adaptive to screen resolution)
+- **Dynamic View Radius**: Update radius calculated from camera dimensions (canvas width/height in tiles)
 
 ### **Game Loop**
 - **Target FPS**: 60 FPS
@@ -491,6 +628,35 @@ Currently a **survival/resource gathering game** with:
 - **Delta Time**: Proper time-based calculations for animations
 - **Update Throttling**: Expensive operations only when needed
 - **Animation Updates**: Smooth frame transitions using game loop timing
+
+### Anti-Clustering System
+- **Multi-Layer Validation**: Three-tier spacing enforcement (VillageGenerator, WorldGenerator, Chunk.ts)
+- **2-Tile Minimum Radius**: Animals require at least 2 empty tiles around them
+- **Adequate Movement Space**: Minimum 3 passable adjacent tiles for animal mobility
+- **Spawn Rejection Logging**: Console feedback for blocked spawn attempts
+- **Real-Time Validation**: Dynamic spacing checks during NPC addition to chunks
+
+### Species Grouping System
+- **Same-Type Attraction**: Animals are more likely to spawn near others of their species
+- **Detection Radius**: 4-tile radius check for nearby animals of the same type
+- **Grouping Bonus**: 3x higher spawn probability for same species when nearby animals detected
+- **Natural Herds**: Creates realistic animal clustering (pig herds, chicken flocks, sheep groups)
+- **Balanced Randomness**: Still allows diverse spawning while encouraging species grouping
+- **Applied to All Animals**: Both village and wild animals use species-preference logic
+
+### Dynamic Cluster Behavior
+- **Personal Space Mechanism**: Animals escape when surrounded by 3+ same-type animals within 2 tiles
+- **Crowded Repulsion**: 40% chance to move away from cluster center when feeling crowded
+- **Clustered Movement Boost**: Animals near others have 90% movement chance (vs 80% isolated)
+- **Enhanced Avoidance**: 30% chance to move away from nearby animals when clustered (vs 20% isolated)
+- **Boosted Exploration**: 35% chance for exploration when clustered (vs 25% isolated)
+- **Restlessness System**: Movement probability increases by up to 30% after 3+ seconds of inactivity
+- **Reduced Attraction Penalties**: Less severe attraction reduction when near same-type animals
+- **Distance-Based Attraction**: Attraction strength decreases when already near other same-type animals
+- **Isolation Response**: Isolated animals have 50% higher attraction to find their species
+- **Dynamic Attraction Rates**: 10-40% attraction chance based on local population density
+- **Edge Liberation**: Animals on cluster edges can now move outward for exploration
+- **Adjacent Movement Allowed**: Animals can move next to each other, only avoiding overcrowded situations
 
 ---
 

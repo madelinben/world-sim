@@ -64,7 +64,64 @@ export class WorldGenerator {
     const tiles: Tile[][] = [];
     const allChunkStructures: VillageStructure[] = [];
 
-    // First pass: generate all tiles and collect all village structures
+    // Create occupancy checker function
+    const checkTileOccupied = (tileX: number, tileY: number): boolean => {
+      // Calculate local coordinates within this chunk
+      const localX = tileX - (chunkX * chunkSize);
+      const localY = tileY - (chunkY * chunkSize);
+
+      // Check if coordinates are within this chunk
+      if (localX < 0 || localX >= chunkSize || localY < 0 || localY >= chunkSize) {
+        return true; // Treat out-of-chunk tiles as occupied
+      }
+
+      const tile = tiles[localY]?.[localX];
+      if (!tile) return false;
+
+      // Check if tile has blocking content
+      const hasStructures = (tile.villageStructures?.length ?? 0) > 0;
+      const hasLivingTrees = tile.trees?.some(tree => tree.getHealth() > 0) ?? false;
+      const hasLivingCactus = tile.cactus?.some(cactus => cactus.getHealth() > 0) ?? false;
+      const isImpassableTerrain = tile.value === 'DEEP_WATER' || tile.value === 'STONE';
+
+      const isBlocked = isImpassableTerrain || hasLivingTrees || hasLivingCactus || hasStructures;
+
+      return isBlocked;
+    };
+
+    // Enhanced occupancy checker specifically for animal spacing
+    const checkTileOccupiedForAnimalSpacing = (tileX: number, tileY: number): boolean => {
+      // First check the basic occupancy
+      if (checkTileOccupied(tileX, tileY)) {
+        return true;
+      }
+
+      // Additional check: look for any NPCs that might have been placed during this generation pass
+      const tileKey = `${tileX},${tileY}`;
+
+      // Check if there's already a structure mapped for this tile
+      if (this.villageStructures.has(tileKey)) {
+        const structure = this.villageStructures.get(tileKey);
+        if (structure?.npc) {
+          return true; // There's already an NPC here
+        }
+      }
+
+      // Check if any structures were added to allChunkStructures that contain NPCs at this location
+      for (const structure of allChunkStructures) {
+        if (structure.npc) {
+          const structureTileX = Math.floor(structure.position.x / 16);
+          const structureTileY = Math.floor(structure.position.y / 16);
+          if (structureTileX === tileX && structureTileY === tileY) {
+            return true; // NPC already placed at this location
+          }
+        }
+      }
+
+      return false;
+    };
+
+    // First pass: generate all base tiles
     for (let y = 0; y < chunkSize; y++) {
       const row: Tile[] = [];
       for (let x = 0; x < chunkSize; x++) {
@@ -105,22 +162,32 @@ export class WorldGenerator {
           tile.spriteId = spriteId;
         }
 
-        // Generate village structures for this tile
+        row.push(tile);
+      }
+      tiles.push(row);
+    }
+
+    // Second pass: generate village structures with occupancy checking
+    for (let y = 0; y < chunkSize; y++) {
+      for (let x = 0; x < chunkSize; x++) {
+        const worldX = chunkX * chunkSize + x;
+        const worldY = chunkY * chunkSize + y;
+        const tile = tiles[y]![x]!;
+
         const structures = this.villageGenerator.generateVillageStructures(
           worldX,
           worldY,
-          value,
-          this.villageStructures
+          tile.value,
+          this.villageStructures,
+          checkTileOccupiedForAnimalSpacing
         );
 
         if (structures.length > 0) {
           tile.villageStructures = structures;
           allChunkStructures.push(...structures);
+          console.log(`Added ${structures.length} structures to tile (${worldX}, ${worldY})`);
         }
-
-        row.push(tile);
       }
-      tiles.push(row);
     }
 
     return tiles;
