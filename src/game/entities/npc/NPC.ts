@@ -1,5 +1,6 @@
 import type { Position } from '../../engine/types';
 import type { InventoryItem } from '../inventory/Inventory';
+import { Inventory } from '../inventory/Inventory';
 import { type AssetMapping, getAssetByName } from '../../assets/AssetMap';
 import { getAssetPath } from '../../utils/assetPath';
 
@@ -24,19 +25,20 @@ export interface NPCConfig {
   aggressive?: boolean;
   movementSpeed?: number;
   detectionRange?: number;
-  dropItems?: { type: string; quantity: number }[];
+  inventory?: (InventoryItem | null)[];
 }
 
 export class NPC {
   public readonly type: NPCType;
   public position: Position;
   public readonly originalPosition: Position;
+  public previousPosition: Position; // Track previous position for cactus bounce-back
   public health: number;
   public readonly maxHealth: number;
   public readonly aggressive: boolean;
   public readonly movementSpeed: number;
   public readonly detectionRange: number;
-  public readonly dropItems: { type: string; quantity: number }[];
+  public inventory: Inventory;
   public readonly category: NPCCategory;
 
   public state: NPCState = 'idle';
@@ -88,23 +90,127 @@ export class NPC {
     targetPosition?: Position;
   } | null = null;
 
+  // Track last damage time to prevent spam
+  private lastDamageTime = 0;
+  private cactusDamageCooldown = 0; // Cooldown to prevent repeated cactus damage
+
   constructor(config: NPCConfig) {
     this.type = config.type;
     this.position = { ...config.position };
     this.originalPosition = { ...config.position };
+    this.previousPosition = { ...config.position }; // Initialize previous position
     this.health = config.health ?? this.getDefaultHealth();
     this.maxHealth = this.health;
     this.aggressive = config.aggressive ?? this.getDefaultAggressive();
     this.movementSpeed = config.movementSpeed ?? 1;
     this.detectionRange = config.detectionRange ?? 5;
-    this.dropItems = config.dropItems ?? this.getDefaultDropItems();
+    this.inventory = new Inventory();
     this.category = this.getNPCCategory();
+
+    // Initialize NPC inventory with default items
+    this.initializeInventory(config.inventory);
 
     // Initialize with random movement timer
     this.moveCooldown = Math.random() * this.moveDelay; // Stagger initial movement (already in milliseconds)
     this.lastMovementTime = Date.now(); // Initialize movement tracking
 
     void this.loadAsset();
+  }
+
+  private initializeInventory(initialItems?: (InventoryItem | null)[]): void {
+    if (initialItems) {
+      // Add provided items to inventory
+      for (const item of initialItems) {
+        if (item) {
+          this.inventory.addItem(item.type, item.quantity);
+        }
+      }
+    } else {
+      // Generate default inventory based on NPC type
+      const defaultItems = this.getDefaultInventoryItems();
+      for (const item of defaultItems) {
+        this.inventory.addItem(item.type, item.quantity);
+      }
+    }
+  }
+
+  private getDefaultInventoryItems(): { type: string; quantity: number }[] {
+    switch (this.type) {
+      case 'chicken':
+        return [
+          { type: 'chicken_meat', quantity: Math.floor(Math.random() * 3) + 1 }, // 1-3
+          { type: 'feather', quantity: Math.floor(Math.random() * 2) + 1 } // 1-2
+        ].filter(item => item.quantity > 0);
+
+      case 'pig':
+        return [
+          { type: 'pork', quantity: Math.floor(Math.random() * 4) + 2 }, // 2-5
+          { type: 'leather', quantity: Math.floor(Math.random() * 2) + 1 } // 1-2
+        ].filter(item => item.quantity > 0);
+
+      case 'sheep':
+        return [
+          { type: 'mutton', quantity: Math.floor(Math.random() * 3) + 1 }, // 1-3
+          { type: 'wool', quantity: Math.floor(Math.random() * 4) + 2 } // 2-5
+        ].filter(item => item.quantity > 0);
+
+      case 'trader':
+      case 'axeman_trader':
+      case 'swordsman_trader':
+      case 'spearman_trader':
+      case 'farmer_trader':
+        return [
+          { type: 'gold', quantity: Math.floor(Math.random() * 10) + 5 }, // 5-14
+          { type: 'bread', quantity: Math.floor(Math.random() * 3) + 1 }, // 1-3
+          { type: 'potion', quantity: Math.floor(Math.random() * 2) + 1 } // 1-2
+        ].filter(item => item.quantity > 0);
+
+      case 'orc':
+      case 'skeleton':
+      case 'goblin':
+      case 'archer_goblin':
+      case 'club_goblin':
+      case 'farmer_goblin':
+      case 'orc_shaman':
+      case 'spear_goblin':
+        return [
+          { type: 'bone', quantity: Math.floor(Math.random() * 3) + 1 }, // 1-3
+          { type: 'dark_gem', quantity: Math.floor(Math.random() * 2) }, // 0-1
+          { type: 'weapon_part', quantity: Math.floor(Math.random() * 2) } // 0-1
+        ].filter(item => item.quantity > 0);
+
+      case 'mega_slime_blue':
+      case 'slime':
+        return [
+          { type: 'slime', quantity: Math.floor(Math.random() * 5) + 2 }, // 2-6
+          { type: 'blue_essence', quantity: Math.floor(Math.random() * 3) + 1 } // 1-3
+        ].filter(item => item.quantity > 0);
+
+      default:
+        return [];
+    }
+  }
+
+  public getInventoryItems(): (InventoryItem | null)[] {
+    // Return a copy of inventory items
+    const inventoryItems: (InventoryItem | null)[] = [];
+    for (let i = 0; i < 9; i++) {
+      const item = this.inventory.getItem(i);
+      inventoryItems.push(item ? { ...item } : null);
+    }
+    return inventoryItems;
+  }
+
+  public getDropItems(): { type: string; quantity: number }[] {
+    // Convert inventory to drop items format
+    const dropItems: { type: string; quantity: number }[] = [];
+    for (let i = 0; i < 9; i++) {
+      const item = this.inventory.getItem(i);
+      if (item) {
+        dropItems.push({ type: item.type, quantity: item.quantity });
+      }
+    }
+    return dropItems;
   }
 
   private async loadAsset(): Promise<void> {
@@ -147,6 +253,7 @@ export class NPC {
 
     this.updateAnimation(deltaTime);
     this.updateAttackAnimation(deltaTime);
+    this.updateCactusCooldown(deltaTime);
     this.updateTileBasedMovement(deltaTime, playerPosition, playerInventory, nearbyNPCs, nearbyVillageBuildings);
   }
 
@@ -204,6 +311,9 @@ export class NPC {
       // Update direction based on movement
         this.updateDirectionFromMovement(newTileX - currentTileX, newTileY - currentTileY);
 
+        // Store previous position before moving
+        this.previousPosition = { ...this.position };
+
         // Move to new tile
         this.position = { x: newTileX * 16, y: newTileY * 16 };
         this.lastMovementTime = Date.now(); // Track successful movement
@@ -225,6 +335,10 @@ export class NPC {
         if (forceMove && this.canMoveTo(forceMove)) {
           const forceTileX = Math.floor(forceMove.x / 16);
           const forceTileY = Math.floor(forceMove.y / 16);
+
+          // Store previous position before force moving
+          this.previousPosition = { ...this.position };
+
           this.position = { x: forceTileX * 16, y: forceTileY * 16 };
           this.lastMovementTime = now;
         }
@@ -483,8 +597,57 @@ export class NPC {
           if (distance <= 1) {
             this.startAttack(npc.position);
             npc.takeDamage(5); // Deal 5 damage as specified
-          this.lastAttackTime = now;
-          break;
+
+            // If the NPC died from our attack, collect its drops
+            if (npc.isDead()) {
+              const victimDrops = npc.getDropItems();
+              for (const drop of victimDrops) {
+                if (drop.quantity > 0) {
+                  // Try to add each drop to monster's inventory
+                  const added = this.inventory.addItem(drop.type, drop.quantity);
+                  if (added) {
+                    console.log(`🎯 ${this.type} collected ${drop.quantity}x ${drop.type} from killed ${npc.type}`);
+                  } else {
+                    console.log(`🎯 ${this.type} inventory full! Could not collect ${drop.quantity}x ${drop.type} from ${npc.type}`);
+                  }
+                }
+              }
+            }
+
+            this.lastAttackTime = now;
+            break;
+          }
+        }
+      }
+
+      // Occasionally attack other monsters (monster-on-monster combat)
+      if (Math.random() < 0.1) { // 10% chance to attack other monsters
+        for (const npc of nearbyNPCs) {
+          if (npc.category === 'monster' && npc !== this && !npc.isDead()) {
+            const distance = this.getDistanceToNPC(npc);
+            if (distance <= 1) {
+              console.log(`⚔️ ${this.type} attacks ${npc.type} (monster vs monster)!`);
+              this.startAttack(npc.position);
+              npc.takeDamage(3); // Deal 3 damage to other monsters
+
+              // If the monster died from our attack, collect its drops
+              if (npc.isDead()) {
+                const victimDrops = npc.getDropItems();
+                for (const drop of victimDrops) {
+                  if (drop.quantity > 0) {
+                    const added = this.inventory.addItem(drop.type, drop.quantity);
+                    if (added) {
+                      console.log(`🎯 ${this.type} collected ${drop.quantity}x ${drop.type} from killed ${npc.type}`);
+                    } else {
+                      console.log(`🎯 ${this.type} inventory full! Could not collect ${drop.quantity}x ${drop.type} from ${npc.type}`);
+                    }
+                  }
+                }
+              }
+
+              this.lastAttackTime = now;
+              break;
+            }
           }
         }
       }
@@ -494,10 +657,52 @@ export class NPC {
   private handleTraderBehavior(nearbyVillageBuildings: Position[], nearbyNPCs: NPC[] = []): void {
     if (this.category !== 'friendly' || this.isAttacking) return;
 
-    // Check for nearby monsters and flee if detected
+    const now = Date.now();
+
+    // Check for nearby monsters and handle defensive combat
     const nearbyMonsters = nearbyNPCs.filter(npc =>
       npc.category === 'monster' && !npc.isDead() && this.getDistanceToNPC(npc) <= this.detectionRange
     );
+
+    // Defensive combat - attack adjacent monsters if not blocking their attack
+    if (now - this.lastAttackTime >= this.attackCooldown) {
+      const adjacentMonsters = nearbyMonsters.filter(monster => this.getDistanceToNPC(monster) <= 1);
+
+      for (const monster of adjacentMonsters) {
+        // Check if monster is attacking this trader
+        const isBeingAttacked = monster.isAttacking && monster.attackTarget &&
+          Math.floor(monster.attackTarget.x / 16) === Math.floor(this.position.x / 16) &&
+          Math.floor(monster.attackTarget.y / 16) === Math.floor(this.position.y / 16);
+
+        if (!isBeingAttacked) {
+          // Not being attacked, so can attack the monster
+          console.log(`🛡️ ${this.type} defends against ${monster.type}!`);
+          this.startAttack(monster.position);
+          monster.takeDamage(5); // Traders deal 5 damage
+
+          // If the monster died from our attack, collect its drops
+          if (monster.isDead()) {
+            const victimDrops = monster.getDropItems();
+            for (const drop of victimDrops) {
+              if (drop.quantity > 0) {
+                const added = this.inventory.addItem(drop.type, drop.quantity);
+                if (added) {
+                  console.log(`🎯 ${this.type} collected ${drop.quantity}x ${drop.type} from killed ${monster.type}`);
+                } else {
+                  console.log(`🎯 ${this.type} inventory full! Could not collect ${drop.quantity}x ${drop.type} from ${monster.type}`);
+                }
+              }
+            }
+          }
+
+          this.lastAttackTime = now;
+          return; // Only attack one monster per turn
+        } else {
+          // Being attacked - take reduced damage (blocking)
+          console.log(`🛡️ ${this.type} blocks attack from ${monster.type}!`);
+        }
+      }
+    }
 
     if (nearbyMonsters.length > 0) {
       // Monster avoidance takes priority - flee from nearest monster
@@ -850,6 +1055,9 @@ export class NPC {
   }
 
   private moveToPosition(target: Position): void {
+    // Store previous position before moving
+    this.previousPosition = { ...this.position };
+
     this.position = { ...target };
     this.lastMovementTime = Date.now();
   }
@@ -931,9 +1139,11 @@ export class NPC {
   }
 
   private renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    if (this.isDead() || this.getHealth() <= 0 || this.getMaxHealth() <= 0) return;
+
     const barWidth = 14;
     const barHeight = 2;
-    const healthPercent = this.health / this.maxHealth;
+    const healthPercent = this.getHealth() / this.getMaxHealth();
 
     // Background (red)
     ctx.fillStyle = 'red';
@@ -947,7 +1157,20 @@ export class NPC {
   public takeDamage(damage: number): void {
     if (this.state === 'dead') return;
 
-    this.health -= damage;
+    let actualDamage = damage;
+
+    // Traders can block attacks when being attacked by monsters
+    if (this.category === 'friendly') {
+      // Check if this trader is currently being attacked (blocking scenario)
+      // This would be set by the attacking monster's logic
+      const isBlocking = this.isBeingAttackedByMonster();
+      if (isBlocking) {
+        actualDamage = 1; // Reduce damage to 1 when blocking
+        console.log(`🛡️ ${this.type} blocks attack! Reduced damage from ${damage} to ${actualDamage}`);
+      }
+    }
+
+    this.health -= actualDamage;
     if (this.health <= 0) {
       this.health = 0;
       this.state = 'dead';
@@ -956,12 +1179,23 @@ export class NPC {
     }
   }
 
-  public isDead(): boolean {
-    return this.state === 'dead' || this.health <= 0;
+  private isBeingAttackedByMonster(): boolean {
+    // This is a simplified check - in a more complex system,
+    // we'd track which monsters are currently attacking this NPC
+    // For now, we'll assume traders can block when they're not attacking
+    return !this.isAttacking;
   }
 
-  public getDropItems(): { type: string; quantity: number }[] {
-    return this.dropItems;
+  public isDead(): boolean {
+    return this.state === 'dead';
+  }
+
+  public isCurrentlyAttacking(): boolean {
+    return this.isAttacking;
+  }
+
+  public getAttackTarget(): Position | null {
+    return this.attackTarget;
   }
 
   private getDefaultHealth(): number {
@@ -1414,8 +1648,80 @@ export class NPC {
 
   // Get the intended movement target for this NPC without actually moving
   public getMovementIntention(playerPosition: Position, playerInventory: InventoryItem[], nearbyNPCs: NPC[], nearbyVillageBuildings: Position[] = []): Position | null {
-    // Use the same deterministic decision system as actual movement
     const decision = this.calculateMovementDecision(playerPosition, playerInventory, nearbyNPCs, nearbyVillageBuildings);
     return decision.targetPosition ?? null;
+  }
+
+  public renderSpriteOnly(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    if (!this.isLoaded || !this.sprite || !this.asset) return;
+
+    // Calculate sprite frame based on direction and animation
+    let spriteIndex = 0;
+    if (this.isAttacking) {
+      // Attack animations
+      const attackOffset = this.getAttackDirectionOffset();
+      spriteIndex = attackOffset + this.currentFrame;
+    } else {
+      // Movement animations
+    const directionOffset = this.getDirectionOffset();
+    spriteIndex = directionOffset + this.currentFrame;
+    }
+
+    // Special case: farmer_goblin left direction uses flipped right frames
+    const shouldFlip = this.type === 'farmer_goblin' && this.direction === 'left';
+
+    // Render the sprite
+    const spriteSize = 16;
+    const spritesPerRow = this.sprite.width / spriteSize;
+    const spriteX = (spriteIndex % spritesPerRow) * spriteSize;
+    const spriteY = Math.floor(spriteIndex / spritesPerRow) * spriteSize;
+
+    if (shouldFlip) {
+      // Flip horizontally for farmer_goblin left direction
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        this.sprite,
+        spriteX, spriteY, spriteSize, spriteSize,
+        -(x + spriteSize), y, spriteSize, spriteSize
+      );
+      ctx.restore();
+    } else {
+    ctx.drawImage(
+      this.sprite,
+      spriteX, spriteY, spriteSize, spriteSize,
+      x, y, spriteSize, spriteSize
+    );
+    }
+
+    // Render wide attack animation for SpearGoblin if attacking
+    if (this.isAttacking && this.type === 'spear_goblin' && this.attackTarget) {
+      this.renderWideAttack(ctx, x, y);
+    }
+  }
+
+  public getHealth(): number {
+    return this.health;
+  }
+
+  public getMaxHealth(): number {
+    return this.maxHealth;
+  }
+
+  public canTakeCactusDamage(): boolean {
+    return this.cactusDamageCooldown <= 0;
+  }
+
+  public setCactusDamageCooldown(milliseconds = 1000): void {
+    this.cactusDamageCooldown = milliseconds;
+  }
+
+  public updateCactusCooldown(deltaTime: number): void {
+    if (this.cactusDamageCooldown > 0) {
+      this.cactusDamageCooldown -= deltaTime * 1000; // Convert to milliseconds
+      if (this.cactusDamageCooldown < 0) {
+        this.cactusDamageCooldown = 0;
+      }
+    }
   }
 }

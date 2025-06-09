@@ -70,6 +70,7 @@ interface Tile {
 | `STONE` | Mountain/rock | ❌ Impassable | ❌ Impassable | Gray (#808080) |
 | `SNOW` | Snow-covered | ⚠️ Restricted (1/4 chance) | ❌ Impassable | White (#FFFFFF) |
 | `PLAYER` | Player position | Special | Special | Red (tracked separately) |
+| `VOID` | Cave void areas | ❌ Impassable | ❌ Impassable | Black (#000000) |
 
 ### **DIRT Tile Regeneration**
 - **Creation**: DIRT tiles are created when trees are destroyed
@@ -123,10 +124,18 @@ Generated based on temperature and humidity:
 ### **Movement Rules**
 - **Impassable Tiles**: Cannot move to DEEP_WATER, SHALLOW_WATER, STONE, COBBLESTONE, or SNOW
 - **Living Structure Blocking**: Cannot move to tiles with alive trees (health > 0)
-- **Cactus Passability**: Cactus tiles are passable but deal 5 damage per frame to entities standing on them
+- **Cactus Collision System**: Living cactus (health > 0) are impassable and cause bounce-back
+  - **Damage**: 5 HP damage when attempting to move onto cactus
+  - **Bounce-back**: Entity remains at previous position, movement blocked
+  - **Cooldown**: 1-second damage immunity prevents repeated damage
+  - **All Entities**: Affects player, NPCs, animals, traders, and monsters
 - **Destroyed Structure Passage**: Can move through destroyed structures (health ≤ 0)
 - **Mud Restriction**: Only 1/3 chance to move when standing on MUD
-- **Village Structure Blocking**: Cannot move to tiles with non-passable POIs or living NPCs
+- **Village Structure Blocking**: Cannot move to tiles with non-passable POIs (wells, markets, windmills, entrances) or living NPCs
+- **UI Movement Restrictions**: Arrow keys disabled for player movement when inventory UI is open
+  - **Other UI Types**: Text box and tombstone UI also pause movement through game logic pause
+  - **Directional Updates**: Player facing direction still updates when UI is open
+  - **Action Blocking**: Attack and interact actions disabled during UI display
 
 ### **Direction Tracking**
 - **Facing Direction**: Always updated when movement keys pressed (even if blocked)
@@ -157,6 +166,160 @@ Generated based on temperature and humidity:
   - **Chain Movement**: If one animal wants to move away, others can coordinate to take their place
   - **Deterministic Behavior**: Movement decisions cached for 100ms to ensure consistent intention-execution matching
   - **Escape Mechanism**: Long-stuck animals (8+ seconds) get increased randomness to break deadlocks
+
+## 💀 **Death & Tombstone System**
+
+### **Entity Death Mechanics**
+- **Player Death**: When player health ≤ 0
+  - Creates tombstone at death location with player's complete 9-slot inventory
+  - Player respawns at world origin (0,0) with full health and empty inventory
+  - Player must retrieve items from tombstone by interacting with it
+- **Animal Death** (chicken, pig, sheep): When killed by player
+  - Inventory items automatically transferred to player inventory
+  - No tombstone created (animals consumed immediately)
+- **Trader/Monster Death**: When health ≤ 0
+  - Creates tombstone with NPC's 9-slot inventory
+  - Tombstone becomes interactable POI on the tile
+  - Original NPC removed from world
+
+### **Tombstone Interaction System**
+- **Activation**: Press `F` key while facing a tombstone to open inventory UI
+- **Navigation**: Use `Left/Right` arrow keys to navigate through 9 inventory slots
+- **Item Selection**: Selected slot highlighted with blue border
+- **Take Selected Item**: Press `X` key to take only the selected item
+- **Take All Items**: Press `Z` key to transfer all tombstone items to player inventory
+- **Close Interface**: Press `F` key again to close tombstone inventory UI
+- **Inventory Management**: Items stack with existing player inventory when possible
+- **Auto-Cleanup**: Tombstones automatically disappear when inventory becomes empty
+
+### **Tombstone UI Features**
+- **3x3 Grid Layout**: Tombstone inventory displayed in organized grid format
+- **Entity Identification**: Title shows deceased entity name (e.g., "Player's Tombstone", "Orc's Tombstone")
+- **Item Counter**: Real-time display of remaining items (e.g., "Items: 5/9")
+- **Visual Feedback**: Selected slot highlighted, item quantities displayed
+- **Bubble Design**: Modern rounded UI matching game's aesthetic
+- **Instruction Text**: Built-in help text showing available controls
+
+### **Tombstone System**
+- **Sprite Variants**: Random selection from 8 tombstone variants (Tombstones.png index 0-7)
+- **Inventory Storage**: Each tombstone holds 9 inventory slots from dead entity
+- **Position Tracking**: Tombstones placed at exact death location
+- **Automatic Cleanup**: Tombstones disappear when inventory becomes empty
+- **Naming**: Tombstones display entity type (e.g., "Player's Grave", "Orc Grave")
+
+### **NPC Inventory System**
+All NPCs now have 9-slot inventories with randomly generated items:
+
+**Animal Inventories**:
+- **Chicken**: 1-3 chicken_meat, 1-2 feather
+- **Pig**: 2-5 pork, 1-2 leather
+- **Sheep**: 1-3 mutton, 2-5 wool
+
+**Trader Inventories**:
+- **All Traders**: 5-14 gold, 1-3 bread, 1-2 potion
+
+**Monster Inventories**:
+- **Orcs/Goblins/Skeletons**: 1-3 bone, 0-1 dark_gem, 0-1 weapon_part
+
+**Slime Inventories**:
+- **All Slimes**: 2-6 slime, 1-3 blue_essence
+
+## 🏚️ **Dungeon System**
+
+### **Enhanced Dungeon Generation**
+- **Connected Tunnel System**: Uses entrance position to generate a single winding tunnel path
+- **Extended Main Tunnel**: Primary corridor extends up to 50 tiles from entrance using noise-based pathfinding
+- **Enhanced NPC Movement Space**: Significantly expanded passable areas for NPC movement throughout dungeons
+- **Moderate Branching**: Secondary tunnels (15-30 tiles) with 25% spawn chance for exploration variety
+- **Larger Size**: Total dungeon area approximately 500 tiles for substantial exploration
+- **Deterministic Generation**: Same entrance always generates same dungeon layout
+
+### **Enhanced Tunnel Architecture for NPC Movement**
+- **Entrance Area**: 8-tile radius around entrance guaranteed to be tunnel (increased from 5 tiles for safe spawn zone)
+- **Main Corridor**: Winding path up to 50 tiles deep using generous noise values < 0.5 (increased from 0.35)
+- **Branch Tunnels**: Enhanced paths (15-35 tiles) with noise values < 0.3 (increased from 0.2) and 25% spawn chance
+- **Room System**: New room areas (distance < 25, noise < 0.25) providing large movement spaces for NPCs
+- **Connecting Corridors**: Additional corridor system (distance < 40, noise < 0.15) linking rooms and branches
+- **Void Boundaries**: All non-tunnel areas are VOID tiles (impassable black areas)
+- **Mixed Flooring**: Random mix of STONE (60%) and COBBLESTONE (40%) for visual variety
+
+### **Advanced Dungeon NPC Movement System**
+
+#### **Two-Phase Movement Coordination (Like World System)**
+The dungeon implements the same sophisticated flocking algorithm as the world system:
+- **Phase 1**: Collect movement intentions from ALL NPCs within 50-tile radius for coordination
+- **Phase 2**: Execute updates with registered movement intentions for deadlock resolution
+
+#### **Enhanced Search and Update Radius**
+- **NPC Collection Radius**: 50-tile radius to find ALL dungeon NPCs (expanded from 15 tiles)
+- **Update Radius**: 30-tile radius for actual NPC updates (expanded from 15 tiles)
+- **Flocking Coordination**: All NPCs share movement intentions for swapping and coordination
+- **Speculative Movement**: NPCs can coordinate to swap positions when blocked
+
+#### **Movement Intention System**
+- **Intention Collection**: NPCs declare movement targets before any actual movement
+- **Coordinated Swapping**: NPCs can swap positions when both want each other's tiles
+- **Chain Movement**: If one NPC wants to move away, others can coordinate to take their place
+- **Deterministic Behavior**: Movement decisions cached for 100ms to ensure consistent intention-execution matching
+- **Escape Mechanism**: Long-stuck NPCs (8+ seconds) get increased randomness to break deadlocks
+
+#### **Dungeon-Specific Collision System**
+- **VOID Tile Blocking**: Only VOID tiles and impassable structures block movement in dungeons
+- **World Content Isolation**: World trees, cactus, and world NPCs don't affect dungeon movement
+- **Dynamic Tile Creation**: System creates passable STONE tiles for NPCs when moving to VOID areas
+- **Automatic Cache Updates**: Dungeon tile cache automatically updates when NPCs create new passable areas
+
+### **Player Movement & Tile Validation**
+- **Rendering Mode-Based Movement**: Movement system automatically switches between world and dungeon tile checking
+- **Dungeon Movement Rules**: In dungeon mode, only VOID tiles and impassable structures block movement
+- **World Movement Rules**: In world mode, standard world passability rules apply (water, stone, trees, etc.)
+- **Isolated Systems**: World content (trees, cactus, world NPCs) completely isolated from dungeon movement
+- **Smart Tile Detection**: System automatically uses appropriate tile source based on camera rendering mode
+
+### **Dungeon Entrances & Exits**
+- **Surface Entrance**: POI remains at exact world coordinates in both world and dungeon views
+- **Entrance Interaction**: F key switches camera to dungeon rendering mode
+- **Smart Player Spawning**: Player spawns at nearest unoccupied tile to entrance (searches up to 10 tiles)
+- **Single Portal Generation**: Exactly one portal spawns 45-50 tiles from entrance (30% chance per valid tile)
+- **Guaranteed Exit**: Portal generation ensures players can always return to surface
+- **Portal Exit**: F key interaction returns to surface at nearest unoccupied tile to entrance
+- **Cache Management**: Dungeon chunks automatically cleared when entering new dungeons for fresh generation
+
+### **Rendering System Isolation**
+- **Complete Isolation**: Dungeon mode shows only dungeon content (no world trees/NPCs/health bars)
+- **World Animation Blocking**: Animation system and world health bars disabled in dungeon mode
+- **Camera Mode Toggle**: Seamless switching between world and dungeon views
+- **Entrance Position Tracking**: Dungeon system stores entrance coordinates for consistent generation
+- **Visual Consistency**: Clean dungeon-only rendering with proper tile colors and structure sprites
+- **Health Bar Integration**: Dungeon NPCs show health bars when damaged (same system as world NPCs)
+
+### **Dungeon Features & Rewards**
+
+#### **Enhanced Monster Distribution**
+- **Proximity-Based Spawning**: Monster density increases with distance from entrance
+- **Enhanced Spawn Rate**: Base 10% + (distance × 0.8%) up to 40% maximum for larger dungeons
+- **Lowered Threshold**: Uses monster noise threshold (0.6) with relaxed filtering for more spawns
+- **Monster Variety**: Same types as surface (orcs, skeletons, goblins, slimes, etc.)
+- **Aggressive Behavior**: All dungeon monsters are hostile by default
+- **Guaranteed Spawning**: Improved spawn algorithm ensures monsters appear throughout dungeon
+
+#### **Treasure Chest System**
+- **Distance-Based Rarity**: Chest spawn rate increases deeper in dungeon
+- **Enhanced Spawn Rate**: Base 4% + (distance × 0.3%) up to 25% maximum for larger dungeons
+- **Quality Scaling**: Loot quality improves with distance from entrance (adjusted for 50-tile depth)
+- **Chest Contents by Depth**:
+  - **Shallow (0-20 tiles)**: Copper ore, iron ore, gold ore, leather
+  - **Medium (20-35 tiles)**: Above + gold ingots, rare gems
+  - **Deep (35-50 tiles)**: Above + magic potions, ancient artifacts
+
+### **Player Experience**
+- **Safe Entry**: Entrance area guaranteed passable for player spawning
+- **Substantial Exploration**: Larger tunnel system provides meaningful adventure while maintaining clear progression
+- **Progressive Difficulty**: Monsters and rewards increase with exploration depth over 50-tile journey
+- **Single Guaranteed Exit**: Exactly one portal ensures focused exit strategy and prevents confusion
+- **Enhanced Monster Encounters**: Improved spawn rates guarantee combat encounters throughout exploration
+- **Clean Interface**: No world content bleeding into dungeon view for immersive experience
+- **Balanced Risk vs Reward**: Better loot deeper in dungeon balances increased monster danger and exploration time
 
 ## 🎒 **Inventory System**
 
@@ -304,18 +467,66 @@ Generated based on temperature and humidity:
 ## ⚔️ **Combat System**
 
 ### **Player Combat Stats**
-- **Attack Damage**: 5 damage per attack
+- **Attack Damage**: 5 damage per attack (reduced from 10)
 - **Health**: 100 HP (max health)
 - **Attack Range**: Adjacent tiles only (facing direction)
 - **Attack Cooldown**: No cooldown (can attack continuously)
 - **Health Restoration**: Available via water wells (+25 health)
+- **Blocking**: G key to block attacks, reduces incoming damage from 5 to 1
 
 ### **Attack Mechanics**
 - **Target Selection**: Attacks structure or NPC in facing direction
-- **Damage Application**: Consistent 5 damage per attack
+- **Damage Application**: Consistent 5 damage per attack for player
 - **Health Tracking**: Target health decreases with each attack
 - **Destruction Threshold**: Targets destroyed when health ≤ 0
 - **Priority System**: Trees → Cactus → NPCs → Nothing
+- **Blocking System**: Hold G key to reduce incoming damage to 1 (from any amount)
+
+### **Enhanced NPC Combat System**
+
+#### **Trader Defensive Combat**
+Trader NPCs implement sophisticated defensive behavior when encountering monsters:
+- **Monster Detection**: Traders detect monsters within 5-tile radius
+- **Defensive Attacks**: When not being attacked, traders can attack adjacent monsters dealing 5 damage
+- **Auto-Blocking Mechanism**: When being attacked by monsters, traders automatically block, reducing damage from 5 to 1
+- **Attack State Detection**: Traders check if monsters are currently attacking them before deciding to counter-attack
+- **Priority System**: Defensive combat takes priority over village structure attraction
+- **Loot Collection**: Traders collect drops from monsters they kill
+- **Flee Behavior**: Traders still flee from monsters when not in defensive position
+- **Console Feedback**: System logs when traders block attacks: "🛡️ [TraderType] blocks attack from [MonsterType]!"
+
+#### **Monster Combat Behavior**
+Monsters implement aggressive combat with multiple target types:
+- **Primary Targets**: Animals, traders, and players (player has priority 2, NPCs priority 1)
+- **Attack Damage**: 5 damage to friendly NPCs and players
+- **Monster vs Monster**: 10% chance to attack other monsters, dealing 3 damage
+- **No Blocking**: Monsters never block attacks, always take full damage
+- **Loot Collection**: Monsters collect drops from any NPCs they kill (including other monsters)
+- **Attack Cooldown**: 1 second between attacks
+
+#### **Player Combat Enhancements**
+- **Attack Damage**: 5 damage per attack (standardized with NPCs)
+- **Blocking**: Hold G key to reduce incoming damage to 1
+- **Monster Damage**: Takes 5 damage from monster attacks when not blocking
+- **Blocking Feedback**: Console shows damage reduction when blocking successfully
+
+### **Combat Damage Matrix**
+| Attacker | Target | Base Damage | Blocked Damage | Notes |
+|----------|--------|-------------|----------------|-------|
+| **Player** | Any NPC/Structure | 5 | N/A | Standard attack damage |
+| **Monster** | Player | 5 | 1 (if blocking) | Player can block with G key |
+| **Monster** | Friendly NPC | 5 | 1 (auto-block) | Traders auto-block when being attacked |
+| **Monster** | Other Monster | 3 | 3 (no blocking) | Monsters never block |
+| **Trader** | Monster | 5 | N/A | Defensive combat only |
+
+### **Monster Drop Collection System**
+- **Automatic Collection**: When monster NPCs kill other NPCs, victim drops are automatically added to monster inventory
+- **Inventory Integration**: Monster NPCs have 9-slot inventories that intelligently stack items
+- **Smart Stacking**: Items of same type automatically combine up to stack limits
+- **Console Logging**: Real-time feedback shows successful collections: "🎯 [MonsterType] collected [quantity]x [item]"
+- **Inventory Full Handling**: Monsters with full inventories display warning: "⚠️ [MonsterType] inventory full, couldn't collect [item]"
+- **No Tombstone Creation**: When monsters kill NPCs, items go directly to monster inventory (no tombstone spawned)
+- **Monster Death Drops**: When monsters die, their collected items drop normally creating tombstones
 
 ### **NPC Combat & Drops**
 | NPC Type | Health | Drops When Defeated | Behavior When Attacked |
@@ -323,15 +534,15 @@ Generated based on temperature and humidity:
 | **Chicken** | 20 HP | 1x Chicken Meat | Flees, becomes 'fleeing' state |
 | **Pig** | 35 HP | 3x Pork | Flees, becomes 'fleeing' state |
 | **Sheep** | 25 HP | 1x Mutton + 3x Wool | Flees, becomes 'fleeing' state |
-| **Trader NPCs** | 50 HP | 1x Gold Ingot | Flees, becomes 'fleeing' state |
-| **Orc/Skeleton/Goblin** | 40 HP | 1x Copper Ore | Aggressive, continues attacking |
-| **Archer Goblin** | 60 HP | 1x Monster Drop | Aggressive, continues attacking |
-| **Club Goblin** | 80 HP | 1x Monster Drop | Aggressive, continues attacking |
-| **Farmer Goblin** | 70 HP | 1x Monster Drop | Aggressive, continues attacking |
-| **Orc Shaman** | 100 HP | 2x Monster Drop | Aggressive, continues attacking |
+| **Trader NPCs** | 50 HP | 1x Gold Ingot | Defends against monsters, flees from player |
+| **Orc/Skeleton/Goblin** | 40 HP | 1x Copper Ore | Aggressive, attacks all friendly NPCs and players |
+| **Archer Goblin** | 60 HP | 1x Monster Drop | Aggressive, attacks all friendly NPCs and players |
+| **Club Goblin** | 80 HP | 1x Monster Drop | Aggressive, attacks all friendly NPCs and players |
+| **Farmer Goblin** | 70 HP | 1x Monster Drop | Aggressive, attacks all friendly NPCs and players |
+| **Orc Shaman** | 100 HP | 2x Monster Drop | Aggressive, attacks all friendly NPCs and players |
 | **Spear Goblin** | 90 HP | 1x Monster Drop | Wide attack (2 tiles), aggressive |
-| **Mega Slime Blue** | 150 HP | 3x Monster Drop | Aggressive, continues attacking |
-| **Slime** | 40 HP | 1x Monster Drop | Aggressive, continues attacking |
+| **Mega Slime Blue** | 150 HP | 3x Monster Drop | Aggressive, attacks all friendly NPCs and players |
+| **Slime** | 40 HP | 1x Monster Drop | Aggressive, attacks all friendly NPCs and players |
 
 ### **Attack Animation System**
 All NPCs feature comprehensive attack animation systems:
@@ -350,6 +561,7 @@ Monsters implement sophisticated flocking behavior:
 - **Combat Engagement**: Attack when adjacent to targets, dealing 5 damage
 - **Priority Targeting**: Player has higher priority (2) than NPCs (1)
 - **Attack Cooldown**: 1 second between monster attacks
+- **Monster vs Monster**: Occasional attacks on other monsters (10% chance, 3 damage)
 
 ### **Combat Feedback**
 - **Health Display**: NPCs show health bars when damaged
@@ -358,9 +570,11 @@ Monsters implement sophisticated flocking behavior:
 - **Drop Collection**: Items automatically added to player inventory
 - **Console Logging**: Real-time combat updates and health tracking
 - **Attack Animation**: Visual feedback during combat with proper sprite frames
+- **Blocking Feedback**: Console shows damage reduction for both player and trader blocking
 
 ### **Combat Controls**
 - **Attack**: `Q` key attacks target in facing direction
+- **Block**: `G` key (hold) to block incoming attacks, reducing damage to 1
 - **Interact with Combat Animation**: `F` key triggers interaction with attack animation for visual feedback
 - **Target Display**: Console shows target tile and health status
 - **Damage Feedback**: Real-time health updates displayed
@@ -413,18 +627,39 @@ Trader interactions display score-based messages from popular RPG games:
 ### **Bubble-Style UI Design**
 The game features a modern bubble-style UI with white backgrounds and rounded borders inspired by contemporary mobile interfaces:
 
+### **Responsive UI Architecture**
+The game implements a sophisticated responsive layout system that adapts to different screen sizes:
+
+#### **Layout Calculation System**
+- **Fixed Right Panel**: 74px width for inventory items (50px slot + 24px padding)
+- **Available Space**: Canvas width minus inventory panel width and edge spacing (15px)
+- **Shared UI Width**: Available space minus UI padding (20px × 2) for consistent sizing
+- **Dynamic Centering**: All UI overlays center horizontally within available space
+- **Height Consistency**: Inventory UI overlay matches inventory panel height exactly
+
+#### **Component Relationships**
+- **Text Box ↔ Inventory UI**: Both use identical width and centering calculations
+- **Inventory Panel ↔ Inventory UI**: Overlay matches panel height for visual alignment
+- **Responsive Breakpoints**: UI automatically adjusts as canvas resizes
+- **Consistent Spacing**: All components maintain proportional spacing at any resolution
+
 #### **Text Box System (Pokemon DS-Inspired)**
 - **Style**: Rounded bubble design with white background and subtle shadow
-- **Positioning**: Bottom of screen with 20px padding
+- **Positioning**: Bottom of screen with responsive padding
 - **Activation**: Press `F` key on notice boards to display village information
-- **Dismissal**: Any key press or player movement closes the text box
+- **Dismissal**: Any key press, `ESC` key, or player movement closes the text box
 - **Content**: Village names, descriptions, and lore text
 - **Typography**: Clean Arial font with proper hierarchy (bold titles, regular body text)
-- **Responsive**: Adapts to screen width with proper text wrapping
+- **Game Pause**: Game logic pauses while text box is displayed
+- **Responsive Layout System**:
+  - **Width Calculation**: Uses available canvas width minus right-side inventory panel width
+  - **Dynamic Centering**: Automatically centers horizontally in available space
+  - **Shared Dimensions**: Uses same width calculation as inventory UI overlay for consistency
+  - **Text Wrapping**: Content automatically wraps based on calculated responsive width
 
 #### **Inventory UI (3DS-Inspired)**
 - **Style**: Bubble slots with rounded corners and modern aesthetics
-- **Layout**: 9 vertical slots on the right side of screen
+- **Layout**: 9 vertical slots on the right side of screen (inventory panel) + detailed overlay when opened
 - **Slot Design**: White background bubbles with light blue selection highlighting
 - **Visual Elements**:
   - Slot numbers (1-9) in top-left corner
@@ -434,7 +669,41 @@ The game features a modern bubble-style UI with white backgrounds and rounded bo
 - **Interaction**: Click slots or use number keys 1-9 for selection
 - **Drop Shadow**: Subtle shadow effects for depth perception
 - **Toggle Feature**: Press `E` key to open/close detailed inventory UI overlay
-- **Responsive Design**: UI adapts to screen width, centered horizontally with proper spacing
+- **Emergency Close**: Press `ESC` key to immediately close inventory UI
+- **Movement Restriction**: Arrow keys do not move player when inventory UI is open
+- **Game Pause**: Game logic pauses while inventory UI is displayed
+- **Responsive Layout System**:
+  - **Shared Width**: Inventory UI overlay matches text box width exactly
+  - **Shared Height**: Inventory UI overlay matches right-side inventory panel height exactly
+  - **Available Space Calculation**: Both components use remaining canvas width minus inventory panel width
+  - **Dynamic Resizing**: UI components automatically adjust to canvas size changes
+  - **Consistent Centering**: Both UI overlays use identical horizontal centering logic
+
+#### **Tombstone UI System**
+- **Style**: Bubble design matching overall UI aesthetic
+- **Layout**: 3×3 grid layout for tombstone inventory display
+- **Entity Identification**: Title shows deceased entity name (e.g., "Player's Tombstone")
+- **Visual Feedback**: Selected slot highlighted with blue border
+- **Navigation**: Use `Left/Right` arrow keys to navigate slots
+- **Item Actions**: `Z` for take all, `X` for take selected
+- **Close Options**: `F` key or `ESC` key to close interface
+- **Game Pause**: Game logic pauses while tombstone UI is displayed
+
+#### **Console UI System**
+- **Style**: Black background containers with white text for high contrast visibility
+- **Positioning**: Bottom-left corner of the canvas with 10px padding
+- **Layout**: Vertical stack with newest entries at the bottom, older entries moving up
+- **Entry Design**: Each log entry has its own black bubble container sized to text width
+- **Text Styling**: White text using pixel font (Press Start 2P) or Arial fallback
+- **Auto-Sizing**: Container width automatically adjusts to text content (max 400px)
+- **Entry Management**: Displays up to 10 most recent log entries, automatically removes oldest
+- **Real-Time Updates**: Logs player position and nearest structures on every tile movement
+- **Content Types**:
+  - **Player Position**: Current tile coordinates (e.g., "Player: (15, -23)")
+  - **Nearest Village Well**: Closest water well coordinates (e.g., "Nearest Well: (20, -30)")
+  - **Nearest Dungeon Entrance**: Closest dungeon entrance coordinates (e.g., "Nearest Dungeon: (45, 12)")
+- **Search Algorithm**: Uses expanding radius search up to 100 tiles for efficient structure detection
+- **Performance**: Only searches when player moves to new tile, not on every frame
 
 ### **Notice Board System**
 A comprehensive village information system that provides lore and character to settlements:
@@ -480,7 +749,12 @@ A comprehensive village information system that provides lore and character to s
 - **Key Handling**: Comprehensive input system for UI interaction
 - **Canvas Rendering**: High-performance rendering with proper layering
 - **Responsive Design**: UI adapts to different screen sizes and resolutions
-- **Layout Coordination**: Text box and inventory UI share consistent width calculations
+- **Shared Layout System**: Centralized dimension calculation for consistent UI positioning
+- **Dynamic Width Matching**: Text box and inventory UI maintain identical widths automatically
+- **Height Synchronization**: Inventory UI overlay matches inventory panel height precisely
+- **Layout Coordination**: All UI components use shared responsive calculation methods
+- **Console Integration**: Real-time logging system with automatic position tracking and structure detection
+- **Movement Logging**: Console UI automatically logs player position and nearest important structures
 - **Bubble Effects**: Consistent rounded corners, shadows, and modern styling throughout
 
 ## 🏘️ **Village Generation System**
@@ -590,11 +864,14 @@ Each village automatically generates 5 friendly trader NPCs:
 | `portal` | F key to teleport | Random teleportation |
 | `empty_notice_board` | F key to post | Empty message board |
 
-#### **Transportation**
-| POI Type | Interaction | Effect |
-|----------|-------------|--------|
-| `boat_vertical` | F key to board | Allows water travel (up/down) |
-| `boat_horizontal` | F key to board | Allows water travel (left/right) |
+#### **Transportation & Entrances**
+| POI Type | Interaction | Effect | Passable |
+|----------|-------------|--------|----------|
+| `boat_vertical` | F key to board | Allows water travel (up/down) | Variable |
+| `boat_horizontal` | F key to board | Allows water travel (left/right) | Variable |
+| `mine_entrance` | F key to enter | Teleport to underground mine | ❌ Impassable |
+| `dungeon_entrance` | F key to enter | Switch to dungeon rendering view | ❌ Impassable |
+| `dungeon_portal` | F key to exit | Return to surface world rendering | ❌ Impassable |
 
 #### **Harvestable Resources**
 | POI Type | Growth Stages | Harvest Yield | Requirements |
@@ -620,15 +897,16 @@ Each village automatically generates 5 friendly trader NPCs:
 #### **Underground Structures**
 | Structure | Spawn Rate | Requirements | Rarity |
 |-----------|------------|--------------|--------|
-| **Mine Entrance** | 70% of underground spawns | STONE tiles, mine noise > 0.98 | Extremely rare |
-| **Dungeon Entrance** | 30% of underground spawns | STONE tiles, mine noise > 0.98 | Extremely rare |
+| **Mine Entrance** | 70% of underground spawns | STONE/COBBLESTONE/GRAVEL/GRASS tiles, mine noise > 0.1 | Extremely common (testing) |
+| **Dungeon Entrance** | 30% of underground spawns | STONE/COBBLESTONE/GRAVEL/GRASS tiles, mine noise > 0.1 | Extremely common (testing) |
 
 #### **Generation Rules**
-- **Noise Threshold**: 0.98+ (even higher than villages 0.85 for extreme rarity)
+- **Noise Threshold**: 0.1+ (extremely common for testing purposes)
 - **Noise Frequency**: 3x frequency for more variation
-- **Biome Restriction**: Only spawn on STONE tiles
+- **Biome Restriction**: Spawn on STONE, COBBLESTONE, GRAVEL, and GRASS tiles (testing)
 - **Functionality**: Teleport player underground when interacted with
-- **Spacing**: Minimum 15 tiles between underground structures
+- **Spacing**: Minimum 2 tiles between underground structures (testing values)
+- **Additional Spawn Chance**: 95% chance when noise threshold is met (testing values)
 
 #### **Dungeon Monster Generation**
 Each dungeon entrance automatically generates 5 hostile monsters:
@@ -756,18 +1034,40 @@ Trader NPCs implement specialized flocking AI distinct from animal behavior:
 
 ### **Combat Controls**
 - **Attack**: `Q` key - Attack structure in facing direction
+- **Block**: `G` key (hold) - Block incoming attacks, reducing damage to 1
 
 ### **Interaction Controls**
 - **Interact**: `F` key - Interact with POIs and structures
   - **Notice Boards**: Displays village information in bubble-style text box
   - **Water Wells**: Restores 25 health points
   - **Trader NPCs**: Triggers RPG dialogue system with score-based responses
+  - **Tombstones**: Opens tombstone inventory UI for item retrieval
+  - **Dungeon Entrances**: Switches camera to dungeon rendering mode
+  - **Dungeon Portals**: Returns camera to surface world rendering mode
   - **Other POIs**: Various context-specific interactions
+
+### **Tombstone Interaction Controls**
+- **Open Tombstone**: `F` key while facing a tombstone
+- **Navigate Items**: `Left/Right` arrow keys to select different inventory slots
+- **Take Selected Item**: `X` key to take only the currently selected item
+- **Take All Items**: `Z` key to transfer all tombstone items to player inventory
+- **Close Tombstone**: `F` key to close the tombstone inventory interface
+- **Emergency Close**: `ESC` key to immediately close tombstone UI
 
 ### **Inventory Controls**
 - **Slot Selection**: `1-9` keys select inventory slots
 - **Mouse Selection**: Click inventory slots to select items
 - **Open Inventory**: `E` key displays full inventory state
+- **Close Inventory**: `E` key or `ESC` key to close inventory UI
+- **Emergency Close**: `ESC` key to immediately close inventory UI
+
+### **UI Controls**
+- **Close Any UI**: `ESC` key - Universal close key for all UI components
+  - **Text Box**: Closes village notice board text displays
+  - **Inventory UI**: Closes detailed inventory interface
+  - **Tombstone UI**: Closes tombstone interaction interface
+- **Movement Restriction**: Arrow keys disabled when inventory UI is open
+- **Game Pause**: Game logic pauses when any UI component is open
 
 ### **Mouse Controls**
 - **Camera Drag**: Click and drag to move camera view
@@ -936,6 +1236,14 @@ Currently a **survival/resource gathering game** with:
 - **Delta Time**: Proper time-based calculations for animations
 - **Update Throttling**: Expensive operations only when needed
 - **Animation Updates**: Smooth frame transitions using game loop timing
+- **UI Pause System**: Game logic automatically pauses when any UI component is open
+  - **Paused Elements**: World updates, NPC movement, animation systems, entity deaths
+  - **Active Elements**: Player animation, control input handling, UI rendering
+  - **Resume Behavior**: Game resumes immediately when all UI components are closed
+- **Console Logging System**: Real-time position tracking and structure detection
+  - **Movement Triggers**: Console logs update only when player moves to new tile coordinates
+  - **Efficient Search**: Expanding radius algorithm finds nearest structures within 100-tile range
+  - **Log Management**: Automatic cleanup maintains 10 most recent entries for performance
 
 ### **Anti-Clustering System**
 - **Multi-Layer Validation**: Three-tier spacing enforcement (VillageGenerator, WorldGenerator, Chunk.ts)
@@ -966,6 +1274,66 @@ Currently a **survival/resource gathering game** with:
 - **Edge Liberation**: Animals on cluster edges can now move outward for exploration
 - **Adjacent Movement Allowed**: Animals can move next to each other, only avoiding overcrowded situations
 
+### **Advanced Movement Coordination System**
+
+#### **Two-Phase Movement Algorithm**
+Both world and dungeon systems implement sophisticated movement coordination to prevent NPC clustering and deadlocks:
+
+**Phase 1: Intention Collection**
+- All NPCs within update radius declare their intended movement targets
+- Movement intentions registered globally before any actual movement occurs
+- System builds map of target tiles and which NPCs want to move there
+
+**Phase 2: Coordinated Execution**
+- NPCs execute movements with full knowledge of other NPCs' intentions
+- Speculative movement allows position swapping and chain movements
+- Deadlock resolution through coordinated group movement
+
+#### **Movement Intention System**
+- **getMovementIntention()**: NPCs calculate target positions without actually moving
+- **Intention Caching**: Movement decisions cached for 100ms to ensure consistency
+- **Deterministic Behavior**: Same NPC always makes same decision given same conditions
+- **Global Coordination**: All NPCs in area share movement intentions for coordination
+
+#### **Speculative Movement & Deadlock Resolution**
+- **Position Swapping**: Two NPCs wanting each other's tiles can swap positions
+- **Chain Movement**: If NPC A wants to move away, NPC B can take A's position
+- **Bidirectional Coordination**: System detects mutual movement desires
+- **Escape Mechanisms**: Long-stuck NPCs (8+ seconds) get enhanced randomness to break deadlocks
+
+#### **Collision Callbacks & Coordination**
+- **setTileCollisionCallback()**: Each NPC gets tile-specific collision detection
+- **setSpeculativeMovementCallback()**: Enables coordination with other NPCs
+- **Context-Aware Collision**: Different collision rules for world vs dungeon modes
+- **Dynamic Tile Creation**: Dungeon NPCs can create passable tiles when needed
+
+#### **Performance Optimization**
+- **Radius-Based Updates**: Only NPCs within view radius + buffer are updated
+- **Intention Sharing**: All NPCs share intentions but only nearby ones execute
+- **Cache Efficiency**: Movement decisions cached to avoid recalculation
+- **Staggered Processing**: NPCs have random initial delays to prevent synchronization
+
+### **Enhanced Collision Detection System**
+- **Mode-Aware Collision**: Different collision rules for world vs dungeon rendering modes
+- **Dynamic Context Switching**: Movement system automatically adapts to current camera rendering mode
+- **Callback-Based Architecture**: NPCs use collision callbacks for tile-specific movement validation
+- **Speculative Movement**: Advanced coordination system allows NPCs to negotiate position swaps
+- **Isolated Systems**: World and dungeon collision systems completely separate to prevent interference
+
+### **Advanced Movement Intention Architecture**
+- **Two-Phase Processing**: Intention collection phase followed by coordinated execution phase
+- **Global Intention Map**: Shared data structure tracking all NPC movement desires
+- **Deterministic Caching**: Movement decisions cached for 100ms to ensure execution matches intention
+- **Deadlock Prevention**: Multiple escape mechanisms for stuck NPCs including increased randomness
+- **Cross-System Implementation**: Same algorithm used in both world and dungeon systems
+
+### **Dungeon System Enhancements**
+- **Dynamic Tile Generation**: NPCs can create passable STONE tiles when moving into VOID areas
+- **Cache Synchronization**: Dungeon chunk cache automatically updates when NPCs modify tile data
+- **Enhanced Tunnel Generation**: Expanded passable areas with rooms, corridors, and connecting paths
+- **Isolated Rendering**: Complete separation of world and dungeon content during rendering
+- **Fresh Generation**: Dungeon caches cleared when entering new dungeons for consistent experience
+
 ---
 
-*This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system, sophisticated combat mechanics with attack animations, village-based reputation system with RPG dialogue, monster flocking algorithms, trader generation, dungeon monster spawning, environmental interactions with priority-based structure placement, and modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using advanced AI behaviors.*
+*This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system, sophisticated combat mechanics with blocking systems, village-based reputation system with RPG dialogue, advanced monster flocking algorithms with two-phase movement coordination, enhanced dungeon systems with expanded NPC movement spaces, trader generation with defensive combat capabilities, dungeon monster spawning, environmental interactions with priority-based structure placement, modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces, and comprehensive movement intention systems that prevent NPC deadlocks through speculative movement and position swapping. The enhanced dungeon system provides substantially more movement space for NPCs through expanded tunnel generation, room systems, and connecting corridors, while the advanced collision detection ensures smooth coordination between NPCs in both world and dungeon environments. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using sophisticated AI behaviors with auto-blocking trader defensive combat.*

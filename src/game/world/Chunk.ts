@@ -293,8 +293,10 @@ export class Chunk {
       return true;
     }
 
-    // Cactus are now passable but will deal damage (removed cactus blocking logic)
-    // Cactus damage will be handled separately when entities move onto cactus tiles
+    // Check for living cactus - these are impassable and will cause damage
+    if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
+      return true;
+    }
 
     // Check for village structures (POIs and NPCs)
     if (tile.villageStructures) {

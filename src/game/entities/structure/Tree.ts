@@ -73,8 +73,32 @@ export class Tree extends Structure {
   }
 
   public renderAtScreenPosition(ctx: CanvasRenderingContext2D, screenX: number, screenY: number, scale = 1): void {
-    // Use the base class method which includes health bar rendering
-    super.renderAtScreenPosition(ctx, screenX, screenY, scale);
+    // Always render tree sprite, even if destroyed (show broken stump)
+    this.sprite.render(ctx, screenX, screenY, scale);
+
+    // Only render health bar if not destroyed and damaged
+    if (!this.isStructureDestroyed() && this.getHealth() < this.getMaxHealth()) {
+      this.renderHealthBar(ctx, screenX, screenY);
+    }
+  }
+
+  public renderSpriteOnly(ctx: CanvasRenderingContext2D, screenX: number, screenY: number, scale = 1): void {
+    // Always render tree sprite, even if destroyed (show broken stump)
+    this.sprite.render(ctx, screenX, screenY, scale);
+  }
+
+  protected renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const barWidth = 14;
+    const barHeight = 2;
+    const healthPercent = this.getHealth() / this.getMaxHealth();
+
+    // Background (red)
+    ctx.fillStyle = 'red';
+    ctx.fillRect(x + 1, y - 4, barWidth, barHeight);
+
+    // Foreground (green)
+    ctx.fillStyle = 'green';
+    ctx.fillRect(x + 1, y - 4, barWidth * healthPercent, barHeight);
   }
 
   private grow(): void {

@@ -7,7 +7,8 @@ import type { Position } from '../engine/types';
 import type { InventoryItem } from '../entities/inventory/Inventory';
 import { NPC } from '../entities/npc/NPC';
 import type { VillageStructure } from './VillageGenerator';
-import { type POI } from '../entities/poi/POI';
+import { POI } from '../entities/poi/POI';
+import { Tombstone } from '../entities/poi/Tombstone';
 
 export class World {
     public readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
@@ -29,6 +30,9 @@ export class World {
 
     // Track current player position for collision detection
     private currentPlayerPosition?: Position;
+
+    // Track tombstones by position
+    private tombstones = new Map<string, Tombstone>();
 
     constructor(camera: Camera, generator?: WorldGenerator) {
         this.generator = generator ?? new WorldGenerator();
@@ -97,6 +101,22 @@ export class World {
 
         // Invalidate cache since tile occupancy changed
         this.invalidateCache();
+    }
+
+    public bounceBackNPC(currentTileX: number, currentTileY: number, npc: NPC): void {
+        // Find the village structure containing this NPC
+        const currentTile = this.getTile(currentTileX, currentTileY);
+        if (!currentTile?.villageStructures) return;
+
+        const npcStructure = currentTile.villageStructures.find(s => s.npc === npc);
+        if (!npcStructure) return;
+
+        // Calculate previous tile position
+        const prevTileX = Math.floor(npc.previousPosition.x / WorldGenerator.TILE_SIZE);
+        const prevTileY = Math.floor(npc.previousPosition.y / WorldGenerator.TILE_SIZE);
+
+        // Move NPC back to previous position
+        this.moveNPCBetweenTiles(npcStructure, currentTileX, currentTileY, prevTileX, prevTileY);
     }
 
     public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
@@ -352,13 +372,48 @@ export class World {
                 }
             }
 
-            // Render NPCs on top of POIs
+            // Render NPCs on top of POIs (sprites only, no health bars)
             for (const structure of tile.villageStructures) {
                 if (structure.npc && !structure.npc.isDead()) {
-                    structure.npc.render(ctx, tileX + 1, tileY + 1);
+                    structure.npc.renderSpriteOnly(ctx, tileX + 1, tileY + 1);
                 }
             }
         }
+    }
+
+    public renderHealthBars(ctx: CanvasRenderingContext2D, camera: Camera): void {
+        // Render health bars for NPCs on top of all sprites
+        const visibleTiles = Array.from(this.visibleTileCache.values());
+        for (const tile of visibleTiles) {
+            if (tile.villageStructures) {
+                const screenPos = camera.worldToScreen(tile.x * this.TILE_SIZE, tile.y * this.TILE_SIZE);
+                const tileX = screenPos.x - (this.TILE_SIZE / 2);
+                const tileY = screenPos.y - (this.TILE_SIZE / 2);
+
+                for (const structure of tile.villageStructures) {
+                    if (structure.npc && !structure.npc.isDead()) {
+                        // Render health bar only if NPC is alive (health > 0) and damaged
+                        if (structure.npc.getHealth() > 0 && structure.npc.getHealth() < structure.npc.getMaxHealth()) {
+                            this.renderHealthBar(ctx, tileX + 1, tileY + 1, structure.npc.getHealth(), structure.npc.getMaxHealth());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number, health: number, maxHealth: number): void {
+        const barWidth = 14;
+        const barHeight = 2;
+        const healthPercent = health / maxHealth;
+
+        // Background (red)
+        ctx.fillStyle = 'red';
+        ctx.fillRect(x + 1, y - 4, barWidth, barHeight);
+
+        // Foreground (green)
+        ctx.fillStyle = 'green';
+        ctx.fillRect(x + 1, y - 4, barWidth * healthPercent, barHeight);
     }
 
     public getTileColor(type: TileType): string {
@@ -626,8 +681,10 @@ export class World {
             return true;
         }
 
-        // Cactus are now passable but will deal damage (removed cactus blocking logic)
-        // Cactus damage will be handled separately when entities move onto cactus tiles
+        // Check for living cactus - these are impassable and will cause damage
+        if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
+            return true;
+        }
 
         // Check for village structures (POIs and NPCs), excluding the moving NPC
         if (tile.villageStructures) {
@@ -774,5 +831,127 @@ export class World {
 
         // Clear the breeding request
         npc.breedingRequest = undefined;
+    }
+
+    public createTombstone(position: Position, deadEntityType: string, inventory: (InventoryItem | null)[], deadEntityName?: string): Tombstone {
+        const tombstone = new Tombstone({
+            position,
+            inventory,
+            deadEntityType,
+            deadEntityName
+        });
+
+        const tileX = Math.floor(position.x / this.TILE_SIZE);
+        const tileY = Math.floor(position.y / this.TILE_SIZE);
+        const tombstoneKey = `${tileX},${tileY}`;
+
+        this.tombstones.set(tombstoneKey, tombstone);
+
+        // Add tombstone as a POI to the tile
+        const tile = this.getTile(tileX, tileY);
+        if (tile) {
+            tile.villageStructures = tile.villageStructures ?? [];
+            tile.villageStructures.push({
+                type: 'tombstone',
+                position,
+                poi: new POI({
+                    type: 'tombstone',
+                    position,
+                    interactable: true,
+                    passable: false,
+                    customData: { tombstoneVariant: tombstone.tombstoneVariant }
+                })
+            });
+        }
+
+        this.invalidateCache();
+        return tombstone;
+    }
+
+    public handleAnimalDeath(animal: NPC, playerPosition: Position, playerInventory: { addItem: (type: string, quantity: number) => boolean }): void {
+        // For animals killed by player, add inventory directly to player
+        const animalInventory = animal.getInventoryItems();
+        for (const item of animalInventory) {
+            if (item) {
+                const added = playerInventory.addItem(item.type, item.quantity);
+                if (added) {
+                    console.log(`🎒 Added ${item.quantity}x ${item.type} from ${animal.type} to player inventory`);
+                } else {
+                    console.log(`🎒 Could not add ${item.quantity}x ${item.type} to player inventory - full!`);
+                }
+            }
+        }
+    }
+
+    public handlePlayerDeath(playerPosition: Position, playerInventory: (InventoryItem | null)[]): void {
+        // Create tombstone with player's inventory
+        const tombstone = this.createTombstone(
+            playerPosition,
+            'player',
+            playerInventory,
+            'Player'
+        );
+
+        console.log(`💀 Player died! Tombstone created at (${Math.floor(playerPosition.x / this.TILE_SIZE)}, ${Math.floor(playerPosition.y / this.TILE_SIZE)})`);
+
+        // Player should respawn at 0,0 with empty inventory
+        // This will be handled by the game engine
+    }
+
+    public handleNPCDeath(npc: NPC, npcPosition: Position): void {
+        // Create tombstone with NPC's inventory for traders and monsters
+        if (npc.category === 'friendly' || npc.category === 'monster') {
+            const tombstone = this.createTombstone(
+                npcPosition,
+                npc.type,
+                npc.getInventoryItems(),
+                npc.type.replace('_', ' ')
+            );
+
+            console.log(`💀 ${npc.type} died! Tombstone created at (${Math.floor(npcPosition.x / this.TILE_SIZE)}, ${Math.floor(npcPosition.y / this.TILE_SIZE)})`);
+        }
+
+        // Remove the dead NPC from the tile
+        const tileX = Math.floor(npcPosition.x / this.TILE_SIZE);
+        const tileY = Math.floor(npcPosition.y / this.TILE_SIZE);
+        this.removeDeadNPCAt(tileX, tileY);
+    }
+
+    public getTombstoneAt(tileX: number, tileY: number): Tombstone | null {
+        const tombstoneKey = `${tileX},${tileY}`;
+        return this.tombstones.get(tombstoneKey) ?? null;
+    }
+
+    public interactWithTombstone(tileX: number, tileY: number): { tombstone: Tombstone; success: boolean } | null {
+        const tombstone = this.getTombstoneAt(tileX, tileY);
+        if (!tombstone) return null;
+
+        // Tombstone interaction will be handled by the UI system
+        return { tombstone, success: true };
+    }
+
+    public removeTombstone(tileX: number, tileY: number): boolean {
+        const tombstoneKey = `${tileX},${tileY}`;
+        const tombstone = this.tombstones.get(tombstoneKey);
+
+        if (tombstone?.isEmpty()) {
+            this.tombstones.delete(tombstoneKey);
+
+            // Remove tombstone POI from tile
+            const tile = this.getTile(tileX, tileY);
+            if (tile?.villageStructures) {
+                tile.villageStructures = tile.villageStructures.filter(
+                    structure => structure.type !== 'tombstone'
+                );
+                if (tile.villageStructures.length === 0) {
+                    delete tile.villageStructures;
+                }
+            }
+
+            this.invalidateCache();
+            return true;
+        }
+
+        return false;
     }
 }

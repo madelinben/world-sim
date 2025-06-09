@@ -1,4 +1,4 @@
-import { Sprite } from '../../ui/Sprite';
+import { type Sprite } from '../../ui/Sprite';
 import { type AnimatedEntity } from '../../systems/AnimationSystem';
 
 export interface StructureConfig {
@@ -97,5 +97,14 @@ export abstract class Structure implements AnimatedEntity {
 
   public getDropInfo(): { dropValue: number; dropType: string } {
     return { dropValue: this.dropValue, dropType: this.dropType };
+  }
+
+  public getSprite(): Sprite {
+    return this.sprite;
+  }
+
+  public renderSpriteOnly(ctx: CanvasRenderingContext2D, screenX: number, screenY: number, scale = 1): void {
+    if (this.isDestroyed) return;
+    this.sprite.render(ctx, screenX, screenY, scale);
   }
 }

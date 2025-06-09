@@ -1,6 +1,9 @@
 import type { Position } from '../engine/types';
 import { WorldGenerator } from '../world/WorldGenerator';
 import { UIManager } from '../ui/UIManager';
+import type { InventoryItem } from '../entities/inventory/Inventory';
+
+export type RenderingMode = 'world' | 'dungeon';
 
 export class Camera {
     public position: Position;
@@ -10,6 +13,8 @@ export class Camera {
     private canvas: HTMLCanvasElement;
     private readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
     public uiManager: UIManager;
+    public renderingMode: RenderingMode = 'world';
+    public dungeonEntrancePosition: Position | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -17,6 +22,27 @@ export class Camera {
         this.viewWidth = canvas.width;
         this.viewHeight = canvas.height;
         this.uiManager = new UIManager(canvas);
+    }
+
+    public setDungeonEntrance(position: Position): void {
+        this.dungeonEntrancePosition = position;
+    }
+
+    public centerOnPlayer(): void {
+        this.position = {
+            x: this.playerPosition.x - this.viewWidth / 2,
+            y: this.playerPosition.y - this.viewHeight / 2
+        };
+    }
+
+    public setRenderingMode(mode: RenderingMode): void {
+        this.renderingMode = mode;
+        console.log(`🏚️ Switched to ${mode} rendering mode`);
+    }
+
+    public toggleRenderingMode(): void {
+        this.renderingMode = this.renderingMode === 'world' ? 'dungeon' : 'world';
+        console.log(`🔄 Toggled to ${this.renderingMode} rendering mode`);
     }
 
     public update(playerPosition: Position): void {
@@ -57,7 +83,7 @@ export class Camera {
         };
     }
 
-    public renderUI(): void {
-        this.uiManager.render();
+    public renderUI(inventory: (InventoryItem | null)[], selectedSlot: number): void {
+        this.uiManager.render(inventory, selectedSlot);
     }
 }

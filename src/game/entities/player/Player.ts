@@ -10,11 +10,14 @@ export interface PlayerConfig {
 
 export class Player {
   public position: Position;
-  public health: number;
-  public maxHealth: number;
-  public attackDamage: number;
+  public health = 100;
+  public maxHealth = 100;
+  public attackDamage = 5;
   public inventory: Inventory;
   public lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
+  public facingDirection: 'up' | 'down' | 'left' | 'right' = 'down';
+  public isMoving = false;
+  public isBlocking = false;
 
   // Sprite and animation properties
   private sprite: HTMLImageElement | null = null;
@@ -23,13 +26,13 @@ export class Player {
   private currentFrame = 0;
   private lastFrameTime = 0;
   private readonly animationDuration = 800; // 800ms per cycle (4 frames)
-  private isMoving = false;
   private isAttacking = false;
   private attackAnimationTimer = 0;
   private attackCurrentFrame = 0;
   private attackLastFrameTime = 0;
   private readonly attackAnimationDuration = 600; // 600ms attack animation
   private readonly attackFrameCount = 4; // 4 frames for attack animation
+  private cactusDamageCooldown = 0; // Cooldown to prevent repeated cactus damage
 
   constructor(config: PlayerConfig) {
     this.position = { ...config.position };
@@ -72,8 +75,11 @@ export class Player {
   }
 
   public update(deltaTime: number): void {
+    if (!this.isLoaded) return;
+
     this.updateAnimation(deltaTime);
     this.updateAttackAnimation(deltaTime);
+    this.updateCactusCooldown(deltaTime); // Update cactus damage cooldown
   }
 
   private updateAnimation(deltaTime: number): void {
@@ -195,10 +201,7 @@ export class Player {
       x, y, spriteSize, spriteSize
     );
 
-    // Render health bar if damaged
-    if (this.health < this.maxHealth) {
-      this.renderHealthBar(ctx, x, y);
-    }
+    // Health bar rendering is now handled separately in Game.ts renderPlayerHealthBar method
   }
 
   private getSpriteIndex(): number {
@@ -236,23 +239,16 @@ export class Player {
     }
   }
 
-  private renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-    const barWidth = 14;
-    const barHeight = 2;
-    const healthPercent = this.health / this.maxHealth;
-
-    // Background (red)
-    ctx.fillStyle = 'red';
-    ctx.fillRect(x + 1, y - 4, barWidth, barHeight);
-
-    // Foreground (green)
-    ctx.fillStyle = 'green';
-    ctx.fillRect(x + 1, y - 4, barWidth * healthPercent, barHeight);
-  }
-
   public takeDamage(damage: number): void {
-    this.health = Math.max(0, this.health - damage);
-    console.log(`Player took ${damage} damage. Health: ${this.health}/${this.maxHealth}`);
+    // If blocking, reduce damage to 1
+    const actualDamage = this.isBlocking ? 1 : damage;
+    this.health = Math.max(0, this.health - actualDamage);
+
+    if (this.isBlocking) {
+      console.log(`Player blocked attack! Reduced damage from ${damage} to ${actualDamage}. Health: ${this.health}/${this.maxHealth}`);
+    } else {
+      console.log(`Player took ${actualDamage} damage. Health: ${this.health}/${this.maxHealth}`);
+    }
   }
 
   public heal(amount: number): void {
@@ -304,5 +300,31 @@ export class Player {
 
   public isPlayerSpriteLoaded(): boolean {
     return this.isLoaded;
+  }
+
+  public canTakeCactusDamage(): boolean {
+    return this.cactusDamageCooldown <= 0;
+  }
+
+  public setCactusDamageCooldown(milliseconds = 1000): void {
+    this.cactusDamageCooldown = milliseconds;
+  }
+
+  public updateCactusCooldown(deltaTime: number): void {
+    if (this.cactusDamageCooldown > 0) {
+      this.cactusDamageCooldown -= deltaTime * 1000; // Convert to milliseconds
+      if (this.cactusDamageCooldown < 0) {
+        this.cactusDamageCooldown = 0;
+      }
+    }
+  }
+
+  public setBlocking(blocking: boolean): void {
+    this.isBlocking = blocking;
+    if (blocking) {
+      console.log('Player is now blocking');
+    } else {
+      console.log('Player stopped blocking');
+    }
   }
 }

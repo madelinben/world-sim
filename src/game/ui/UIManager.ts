@@ -1,10 +1,16 @@
 import { type Inventory, type InventoryItem } from '../entities/inventory/Inventory';
+import type { Tombstone } from '../entities/poi/Tombstone';
 
 export interface TextBoxOptions {
   text: string;
   title?: string;
   villageName?: string;
   visible: boolean;
+}
+
+export interface ConsoleLogEntry {
+  text: string;
+  timestamp: number;
 }
 
 export class UIManager {
@@ -15,17 +21,19 @@ export class UIManager {
   private fontLoaded = false;
   private inventoryUIVisible = false; // New inventory UI state
 
+  // Tombstone interaction state
+  private tombstoneUIVisible = false;
+  private currentTombstone: Tombstone | null = null;
+  private tombstoneSelectedSlot = 0; // Selected slot in tombstone inventory
+
+  // Console UI state
+  private consoleLogEntries: ConsoleLogEntry[] = [];
+  private readonly MAX_CONSOLE_ENTRIES = 10; // Maximum number of log entries to display
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     void this.loadPixelFont();
-
-    // Add event listener for 'E' key to toggle inventory UI
-    window.addEventListener('keydown', (event) => {
-      if (event.key.toLowerCase() === 'e') {
-        this.toggleInventoryUI();
-      }
-    });
   }
 
   private async loadPixelFont(): Promise<void> {
@@ -67,6 +75,15 @@ export class UIManager {
     return this.inventoryUIVisible;
   }
 
+  public closeInventoryUI(): void {
+    this.inventoryUIVisible = false;
+    console.log('Inventory UI closed');
+  }
+
+  public isAnyUIVisible(): boolean {
+    return this.textBox.visible || this.inventoryUIVisible || this.tombstoneUIVisible;
+  }
+
   public generateNoticeText(villageName: string): string {
     const welcomeMessages = [
       `Welcome to ${villageName}!`,
@@ -91,22 +108,74 @@ export class UIManager {
     return `${selectedWelcome}\n\n${selectedInfo}\n\nPress any key to continue...`;
   }
 
-  public render(): void {
-    this.renderInventory();
-    if (this.inventoryUIVisible) {
-      this.renderInventoryUI();
-    }
-    if (this.textBox.visible) {
-      this.renderTextBox();
+  public render(inventory: (InventoryItem | null)[], selectedSlot: number): void {
+    this.renderInventory(inventory, selectedSlot);
+    this.renderTextBox();
+    this.renderInventoryUI();
+    this.renderTombstoneUI();
+    this.renderConsoleUI();
+  }
+
+  /**
+   * Add a new log entry to the console UI
+   */
+  public addConsoleLog(text: string): void {
+    const entry: ConsoleLogEntry = {
+      text,
+      timestamp: Date.now()
+    };
+
+    this.consoleLogEntries.push(entry);
+
+    // Keep only the most recent entries
+    if (this.consoleLogEntries.length > this.MAX_CONSOLE_ENTRIES) {
+      this.consoleLogEntries = this.consoleLogEntries.slice(-this.MAX_CONSOLE_ENTRIES);
     }
   }
 
-  private renderInventory(): void {
-    if (!this.inventory) return;
+  /**
+   * Calculate shared UI layout dimensions based on canvas size and inventory panel
+   * This ensures consistent responsive sizing for text box and inventory UI components
+   */
+  private calculateSharedUIDimensions() {
+    const canvas = this.canvas;
 
+    // Right-side inventory panel dimensions (from renderInventory)
+    const slotSize = 50;
+    const inventoryPadding = 12;
+    const spaceFromInventoryToEdge = 15;
+    const inventoryPanelWidth = slotSize + (inventoryPadding * 2); // 74px
+    const slots = 9;
+    const slotPadding = 8;
+    const inventoryPanelHeight = (slotSize + slotPadding) * slots - slotPadding + (inventoryPadding * 2);
+
+    // Calculate available space for UI components (excluding right-side inventory panel)
+    const availableWidth = canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge;
+
+    // UI component dimensions
+    const uiPadding = 20;
+    const uiWidth = availableWidth - (uiPadding * 2); // Leave padding on sides
+    const uiCenterX = (availableWidth - uiWidth) / 2; // Center horizontally in available space
+
+    return {
+      inventoryPanel: {
+        width: inventoryPanelWidth,
+        height: inventoryPanelHeight,
+        x: canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge,
+        y: (canvas.height - inventoryPanelHeight) / 2
+      },
+      sharedUI: {
+        availableWidth,
+        width: uiWidth,
+        centerX: uiCenterX,
+        padding: uiPadding
+      }
+    };
+  }
+
+  private renderInventory(inventory: (InventoryItem | null)[], selectedSlot: number): void {
     const canvas = this.canvas;
     const ctx = this.ctx;
-    const selectedSlot = this.inventory.getSelectedSlot();
 
     // Vertical column inventory configuration
     const slotSize = 50;
@@ -126,11 +195,11 @@ export class UIManager {
     this.drawBubble(ctx, panelX, panelY, panelWidth, panelHeight, 8, '#f8f9fa', '#dee2e6');
 
     // Render each inventory slot vertically (only first 9 slots)
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < slots; i++) {
       const slotX = panelX + inventoryPadding;
       const slotY = panelY + inventoryPadding + (i * (slotSize + slotPadding));
 
-      const item = this.inventory.getItem(i);
+      const item = inventory[i] ?? null;
       const isSelected = i === selectedSlot;
 
       this.renderInventorySlot(ctx, slotX, slotY, slotSize, item, isSelected, i + 1);
@@ -222,21 +291,13 @@ export class UIManager {
     const canvas = this.canvas;
     const ctx = this.ctx;
 
-    // Calculate inventory dimensions (same as in renderInventory)
-    const slotSize = 50;
-    const inventoryPadding = 12;
-    const inventoryPanelWidth = slotSize + (inventoryPadding * 2); // 74px
-    const spaceFromInventoryToEdge = 15; // Space from inventory to right edge
+    // Use shared UI dimensions for consistent responsive layout
+    const dimensions = this.calculateSharedUIDimensions();
 
-    // Calculate available space for UI components (excluding inventory panel)
-    const availableWidth = canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge;
-
-    // Calculate inventory UI dimensions to match text box width and inventory height
-    const slots = 9;
-    const slotPadding = 8;
-    const inventoryUIHeight = (slotSize + slotPadding) * slots - slotPadding + (inventoryPadding * 2); // Same as inventory panel height
-    const inventoryUIWidth = availableWidth - (20 * 2); // Same width calculation as text box (padding = 20)
-    const inventoryUIX = (availableWidth - inventoryUIWidth) / 2; // Center horizontally in available space
+    // Inventory UI matches text box width and inventory panel height
+    const inventoryUIWidth = dimensions.sharedUI.width;
+    const inventoryUIHeight = dimensions.inventoryPanel.height; // Same height as right-side inventory panel
+    const inventoryUIX = dimensions.sharedUI.centerX;
     const inventoryUIY = (canvas.height - inventoryUIHeight) / 2; // Vertically centered
 
     // Draw inventory UI bubble
@@ -249,10 +310,18 @@ export class UIManager {
     ctx.textBaseline = 'middle';
     ctx.fillText('Inventory Details', inventoryUIX + inventoryUIWidth / 2, inventoryUIY + 30);
 
-    // Add placeholder content
+    // Add responsive instructions text
     ctx.fillStyle = '#34495e';
     ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '14px Arial';
-    ctx.fillText('Press E to close', inventoryUIX + inventoryUIWidth / 2, inventoryUIY + inventoryUIHeight - 30);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+
+    // Show responsive information
+    const responsiveInfo = `Width: ${inventoryUIWidth}px (Available: ${dimensions.sharedUI.availableWidth}px)`;
+    ctx.fillText(responsiveInfo, inventoryUIX + inventoryUIWidth / 2, inventoryUIY + inventoryUIHeight - 50);
+
+    // Close instruction
+    ctx.fillText('Press E or ESC to close', inventoryUIX + inventoryUIWidth / 2, inventoryUIY + inventoryUIHeight - 30);
   }
 
   private renderTextBox(): void {
@@ -261,23 +330,14 @@ export class UIManager {
     const canvas = this.canvas;
     const ctx = this.ctx;
 
-    // Calculate inventory dimensions (same as in renderInventory)
-    const slotSize = 50;
-    const inventoryPadding = 12;
-    const inventoryPanelWidth = slotSize + (inventoryPadding * 2); // 74px
-    const spaceFromInventoryToEdge = 15; // Space from inventory to right edge
+    // Use shared UI dimensions for consistent responsive layout
+    const dimensions = this.calculateSharedUIDimensions();
 
-    // Calculate text box dimensions using the specified formula
-    const padding = 20;
+    // Calculate text box dimensions using responsive layout
     const textBoxHeight = 140;
-    const textBoxY = canvas.height - textBoxHeight - padding;
-
-    // Calculate available space for UI components (excluding inventory panel)
-    const availableWidth = canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge;
-
-    // Calculate text box width and center it horizontally
-    const textBoxWidth = availableWidth - (padding * 2); // Leave padding on sides
-    const textBoxX = (availableWidth - textBoxWidth) / 2; // Center horizontally in available space
+    const textBoxY = canvas.height - textBoxHeight - dimensions.sharedUI.padding;
+    const textBoxWidth = dimensions.sharedUI.width; // Same width as inventory UI
+    const textBoxX = dimensions.sharedUI.centerX; // Same centering as inventory UI
 
     // Create bubble effect with rounded rectangle
     this.drawBubble(ctx, textBoxX, textBoxY, textBoxWidth, textBoxHeight, 15);
@@ -310,8 +370,11 @@ export class UIManager {
       mainText = mainText.replace(/\n+$/, '').replace(/\.{3}$/, '');
     }
 
+    // Ensure mainText is never undefined
+    const safeMainText = mainText || '';
+
     // Main text content with proper line break handling
-    const lines = this.wrapTextWithLineBreaks(mainText, textBoxWidth - 40, bodyFont);
+    const lines = this.wrapTextWithLineBreaks(safeMainText, textBoxWidth - 40, bodyFont);
     ctx.fillStyle = '#34495e';
     ctx.font = bodyFont;
     ctx.textAlign = 'center';
@@ -437,5 +500,163 @@ export class UIManager {
     }
 
     return lines;
+  }
+
+  // Tombstone UI methods
+  public showTombstoneUI(tombstone: Tombstone): void {
+    this.tombstoneUIVisible = true;
+    this.currentTombstone = tombstone;
+    this.tombstoneSelectedSlot = 0; // Reset to first slot
+    console.log(`Tombstone UI opened for ${tombstone.getDisplayName()}`);
+  }
+
+  public hideTombstoneUI(): void {
+    this.tombstoneUIVisible = false;
+    this.currentTombstone = null;
+    this.tombstoneSelectedSlot = 0;
+    console.log('Tombstone UI closed');
+  }
+
+  public isTombstoneUIVisible(): boolean {
+    return this.tombstoneUIVisible;
+  }
+
+  public getCurrentTombstone(): Tombstone | null {
+    return this.currentTombstone;
+  }
+
+  public getTombstoneSelectedSlot(): number {
+    return this.tombstoneSelectedSlot;
+  }
+
+  public navigateTombstoneInventory(direction: 'left' | 'right'): void {
+    if (!this.tombstoneUIVisible || !this.currentTombstone) return;
+
+    if (direction === 'left') {
+      this.tombstoneSelectedSlot = (this.tombstoneSelectedSlot - 1 + 9) % 9;
+    } else {
+      this.tombstoneSelectedSlot = (this.tombstoneSelectedSlot + 1) % 9;
+    }
+    console.log(`Tombstone slot selected: ${this.tombstoneSelectedSlot + 1}`);
+  }
+
+  public getTombstoneSelectedItem(): InventoryItem | null {
+    if (!this.currentTombstone) return null;
+    return this.currentTombstone.inventory[this.tombstoneSelectedSlot] ?? null;
+  }
+
+  private renderTombstoneUI(): void {
+    if (!this.tombstoneUIVisible || !this.currentTombstone) return;
+
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+    const tombstone = this.currentTombstone; // Create a local reference for type safety
+
+    // Calculate tombstone UI dimensions to match text box width
+    const slotSize = 40;
+    const slotSpacing = 8;
+    const slotsPerRow = 3;
+    const rows = 3;
+    const contentWidth = (slotSize * slotsPerRow) + (slotSpacing * (slotsPerRow - 1));
+    const contentHeight = (slotSize * rows) + (slotSpacing * (rows - 1));
+    const padding = 20;
+    const titleHeight = 40;
+    const descriptionHeight = 60;
+
+    const tombstoneWidth = contentWidth + (padding * 2);
+    const tombstoneHeight = titleHeight + descriptionHeight + contentHeight + (padding * 2);
+    const tombstoneX = (canvas.width - tombstoneWidth) / 2;
+    const tombstoneY = (canvas.height - tombstoneHeight) / 2;
+
+    // Draw tombstone background
+    this.drawBubble(ctx, tombstoneX, tombstoneY, tombstoneWidth, tombstoneHeight, 15, '#f8f9fa', '#dee2e6');
+
+    // Draw tombstone title
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = this.fontLoaded ? '12px "Press Start 2P"' : 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tombstone.getDisplayName(), tombstoneX + tombstoneWidth / 2, tombstoneY + titleHeight / 2);
+
+    // Draw tombstone description with word wrapping
+    ctx.fillStyle = '#34495e';
+    ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    const itemCount = tombstone.inventory.filter(item => item !== null).length;
+    const description = `Press Left/Right to navigate, Z to take all, X to take selected, F to close. Items: ${itemCount}/9`;
+    const maxWidth = tombstoneWidth - (padding * 2);
+    const lines = this.wrapText(description, maxWidth, '12px Arial');
+    const lineHeight = this.fontLoaded ? 12 : 16;
+    const descStartY = tombstoneY + titleHeight + 10;
+
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], tombstoneX + tombstoneWidth / 2, descStartY + (i * lineHeight));
+    }
+
+    // Draw tombstone inventory slots in 3x3 grid
+    const gridStartX = tombstoneX + padding;
+    const gridStartY = tombstoneY + titleHeight + descriptionHeight;
+
+    for (let i = 0; i < 9; i++) {
+      const row = Math.floor(i / slotsPerRow);
+      const col = i % slotsPerRow;
+      const slotX = gridStartX + col * (slotSize + slotSpacing);
+      const slotY = gridStartY + row * (slotSize + slotSpacing);
+
+      const item = tombstone.inventory[i] ?? null;
+      const isSelected = i === this.tombstoneSelectedSlot;
+
+      this.renderInventorySlot(ctx, slotX, slotY, slotSize, item, isSelected, i + 1);
+    }
+  }
+
+  private renderConsoleUI(): void {
+    if (this.consoleLogEntries.length === 0) return;
+
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+
+    // Console UI positioning - bottom left corner
+    const consolePadding = 10;
+    const entryHeight = 20;
+    const entrySpacing = 2;
+    const maxWidth = 400; // Maximum width for console entries
+
+    // Calculate total height needed for all entries
+    const totalHeight = this.consoleLogEntries.length * (entryHeight + entrySpacing) - entrySpacing;
+    const consoleY = canvas.height - totalHeight - consolePadding;
+
+    // Render each log entry from oldest (top) to newest (bottom)
+    this.consoleLogEntries.forEach((entry, index) => {
+      const entryY = consoleY + index * (entryHeight + entrySpacing);
+
+      // Measure text width to create properly sized background
+      ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '12px Arial';
+      const textMetrics = ctx.measureText(entry.text);
+      const textWidth = Math.min(textMetrics.width + 16, maxWidth); // Add padding, cap at maxWidth
+
+      // Draw black background container for this log entry
+      this.drawBubble(ctx, consolePadding, entryY, textWidth, entryHeight, 4, '#000000', '#333333');
+
+      // Draw white text
+      ctx.fillStyle = '#ffffff';
+      ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '12px Arial';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      // Truncate text if it's too long
+      let displayText = entry.text;
+      if (textMetrics.width > maxWidth - 16) {
+        // Truncate and add ellipsis
+        while (ctx.measureText(displayText + '...').width > maxWidth - 16 && displayText.length > 0) {
+          displayText = displayText.slice(0, -1);
+        }
+        displayText += '...';
+      }
+
+      ctx.fillText(displayText, consolePadding + 8, entryY + entryHeight / 2);
+    });
   }
 }

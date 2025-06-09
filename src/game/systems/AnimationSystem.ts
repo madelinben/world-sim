@@ -50,8 +50,18 @@ export class AnimationSystem {
     }
   }
 
-        public render(ctx: CanvasRenderingContext2D, camera: Camera, scale = 1): void {
-    // Only render entities that are visible in the camera viewport
+  public render(ctx: CanvasRenderingContext2D, camera: Camera, scale = 1): void {
+    // First pass: Render all entity sprites without health bars
+    this.renderEntitySprites(ctx, camera, scale);
+  }
+
+  public renderHealthBars(ctx: CanvasRenderingContext2D, camera: Camera, scale = 1): void {
+    // Second pass: Render health bars on top of all entities
+    this.renderEntityHealthBars(ctx, camera, scale);
+  }
+
+  private renderEntitySprites(ctx: CanvasRenderingContext2D, camera: Camera, scale = 1): void {
+    // Render tree sprites only
     const visibleTrees = this.getVisibleTrees(camera);
     for (const tree of visibleTrees) {
       // Calculate which tile the tree is in
@@ -70,12 +80,12 @@ export class AnimationSystem {
       // Only render if the tree is actually within the canvas bounds
       if (spriteX >= -16 && spriteX <= ctx.canvas.width + 16 &&
           spriteY >= -16 && spriteY <= ctx.canvas.height + 16) {
-        // Render the tree sprite aligned with tile grid
-        tree.renderAtScreenPosition(ctx, spriteX, spriteY, scale);
+        // Render only the tree sprite (no health bar)
+        tree.renderSpriteOnly(ctx, spriteX, spriteY, scale);
       }
     }
 
-            // Render visible cactus
+    // Render cactus sprites only
     const visibleCactus = this.getVisibleCactus(camera);
     for (const cactusEntity of visibleCactus) {
       // Calculate which tile the cactus is in
@@ -100,10 +110,78 @@ export class AnimationSystem {
       // Only render if the cactus is actually within the canvas bounds
       if (spriteX >= -16 && spriteX <= ctx.canvas.width + 16 &&
           spriteY >= -16 && spriteY <= ctx.canvas.height + 16) {
-        // Render the cactus sprite aligned with tile grid
-        cactusEntity.renderAtScreenPosition(ctx, spriteX, spriteY, scale);
+        // Render only the cactus sprite (no health bar)
+        cactusEntity.renderSpriteOnly(ctx, spriteX, spriteY, scale);
       }
     }
+  }
+
+  private renderEntityHealthBars(ctx: CanvasRenderingContext2D, camera: Camera, scale = 1): void {
+    // Render tree health bars on top
+    const visibleTrees = this.getVisibleTrees(camera);
+    for (const tree of visibleTrees) {
+      // Calculate which tile the tree is in
+      const tileX = Math.floor(tree.x / 16);
+      const tileY = Math.floor(tree.y / 16);
+
+      // Get the screen position of the tile corner (to align with tile grid)
+      const tileWorldX = tileX * 16;
+      const tileWorldY = tileY * 16;
+      const tileScreenPos = camera.worldToScreen(tileWorldX, tileWorldY);
+
+      // Calculate the final sprite position (tile position + border offset)
+      const spriteX = tileScreenPos.x - 8 + 1; // tile center offset + border offset
+      const spriteY = tileScreenPos.y - 8 + 1;
+
+      // Only render if the tree is actually within the canvas bounds
+      if (spriteX >= -16 && spriteX <= ctx.canvas.width + 16 &&
+          spriteY >= -16 && spriteY <= ctx.canvas.height + 16) {
+        // Render health bar only if tree is alive (health > 0) and damaged
+        if (tree.getHealth() > 0 && tree.getHealth() < tree.getMaxHealth()) {
+          this.renderHealthBar(ctx, spriteX, spriteY, tree.getHealth(), tree.getMaxHealth());
+        }
+      }
+    }
+
+    // Render cactus health bars on top
+    const visibleCactus = this.getVisibleCactus(camera);
+    for (const cactusEntity of visibleCactus) {
+      // Calculate which tile the cactus is in
+      const tileX = Math.floor(cactusEntity.x / 16);
+      const tileY = Math.floor(cactusEntity.y / 16);
+
+      // Get the screen position of the tile corner (to align with tile grid)
+      const tileWorldX = tileX * 16;
+      const tileWorldY = tileY * 16;
+      const tileScreenPos = camera.worldToScreen(tileWorldX, tileWorldY);
+
+      // Calculate the final sprite position (tile position + border offset)
+      const spriteX = tileScreenPos.x - 8 + 1; // tile center offset + border offset
+      const spriteY = tileScreenPos.y - 8 + 1;
+
+      // Only render if the cactus is actually within the canvas bounds
+      if (spriteX >= -16 && spriteX <= ctx.canvas.width + 16 &&
+          spriteY >= -16 && spriteY <= ctx.canvas.height + 16) {
+        // Render health bar only if cactus is alive (health > 0) and damaged
+        if (cactusEntity.getHealth() > 0 && cactusEntity.getHealth() < cactusEntity.getMaxHealth()) {
+          this.renderHealthBar(ctx, spriteX, spriteY, cactusEntity.getHealth(), cactusEntity.getMaxHealth());
+        }
+      }
+    }
+  }
+
+  private renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number, health: number, maxHealth: number): void {
+    const barWidth = 14;
+    const barHeight = 2;
+    const healthPercent = health / maxHealth;
+
+    // Background (red)
+    ctx.fillStyle = 'red';
+    ctx.fillRect(x + 1, y - 4, barWidth, barHeight);
+
+    // Foreground (green)
+    ctx.fillStyle = 'green';
+    ctx.fillRect(x + 1, y - 4, barWidth * healthPercent, barHeight);
   }
 
   private getVisibleTrees(camera: Camera): Tree[] {

@@ -18,7 +18,8 @@ export type TileType =
   | 'COBBLESTONE'
   | 'STONE'
   | 'SNOW'
-  | 'PLAYER';
+  | 'PLAYER'
+  | 'VOID';
 
 export interface Tile {
   x: number;

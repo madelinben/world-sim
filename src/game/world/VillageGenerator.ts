@@ -196,12 +196,12 @@ export class VillageGenerator {
     // Check for village animals at predetermined offsets from village centers
     this.checkForVillageAnimalPlacement(tileX, tileY, tileType, existingStructures, structures);
 
-    // Check for mines and dungeons on STONE tiles
-    if (tileType === 'STONE') {
+    // Check for mines and dungeons on multiple tile types for testing
+    if (tileType === 'STONE' || tileType === 'COBBLESTONE' || tileType === 'GRAVEL' || tileType === 'GRASS') {
       const mineValue = this.mineNoise(noiseX * 3, noiseY * 3); // Higher frequency for more variation
 
-      // Much stricter threshold and additional spacing checks
-      if (mineValue > 0.98) { // Even rarer than villages (0.98 vs 0.85)
+      // Extremely common threshold for testing purposes
+      if (mineValue > 0.1) { // Super common for testing (0.1 vs 0.5)
         const mineStructure = this.generateMineOrDungeon(tileX, tileY, existingStructures);
         if (mineStructure) {
           structures.push(mineStructure);
@@ -584,8 +584,8 @@ export class VillageGenerator {
       return null; // Only one structure per tile
     }
 
-    // Check for nearby mines/dungeons to prevent clustering
-    const minSpacing = 15; // 15 tiles minimum distance between mines
+    // No spacing for testing purposes
+    const minSpacing = 2; // 2 tiles minimum distance between mines (for testing)
     for (let dx = -minSpacing; dx <= minSpacing; dx++) {
       for (let dy = -minSpacing; dy <= minSpacing; dy++) {
         if (dx === 0 && dy === 0) continue;
@@ -602,8 +602,8 @@ export class VillageGenerator {
       }
     }
 
-    // Add additional randomness - only 30% chance even if noise threshold is met
-    if (Math.random() > 0.3) {
+    // Almost guaranteed spawn for testing purposes
+    if (Math.random() > 0.95) { // 95% chance when noise threshold is met (for testing)
       return null;
     }
 
@@ -734,7 +734,7 @@ export class VillageGenerator {
         type,
         position,
         interactable: true,
-        passable: type.includes('entrance'),
+        passable: false, // All POI structures should be impassable (including entrances)
         animated: type === 'windmill_frame_0',
         customData
       });
