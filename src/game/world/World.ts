@@ -376,7 +376,7 @@ export class World {
             case 'COBBLESTONE': return '#A9A9A9';
             case 'STONE': return '#808080';
             case 'SNOW': return '#FFFFFF';
-            case 'PLAYER': return 'red';
+            case 'PLAYER': return 'transparent';
             default: return '#000000';
         }
     }
@@ -468,12 +468,22 @@ export class World {
                                 return this.checkSpeculativeMovement(tileX, tileY, movingNPC);
                             });
 
-                            // Register NPCs in chunk's NPC tracking system only if it's the only entity on the tile
-                            const localX = ((tile.x % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
-                            const localY = ((tile.y % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+                            // Register NPCs in chunk's NPC tracking system
+                            // Calculate correct tile coordinates from NPC's actual world position
+                            const npcTileX = Math.floor(structure.npc.position.x / this.TILE_SIZE);
+                            const npcTileY = Math.floor(structure.npc.position.y / this.TILE_SIZE);
+                            const localX = ((npcTileX % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
+                            const localY = ((npcTileY % World.CHUNK_SIZE) + World.CHUNK_SIZE) % World.CHUNK_SIZE;
 
-                            // Force register NPC in chunk tracking system
-                            chunk.getAllNPCs().set(`${localX},${localY}`, structure);
+                            // Use registerExistingNPC method since the NPC was already generated and added to tile
+                            const registerResult = chunk.registerExistingNPC(localX, localY, structure);
+                            if (!registerResult) {
+                                console.warn(`Failed to register existing NPC ${structure.type} at local position (${localX}, ${localY}) in chunk (${chunk.chunkX}, ${chunk.chunkY}). NPC world pos: (${structure.npc.position.x}, ${structure.npc.position.y}), tile: (${npcTileX}, ${npcTileY})`);
+                                // Fallback: manually add to chunk tracking only
+                                chunk.getAllNPCs().set(`${localX},${localY}`, structure);
+                            } else {
+                                console.log(`Successfully registered existing NPC ${structure.type} at local position (${localX}, ${localY}) in chunk (${chunk.chunkX}, ${chunk.chunkY}). NPC world pos: (${structure.npc.position.x}, ${structure.npc.position.y}), tile: (${npcTileX}, ${npcTileY})`);
+                            }
                         }
                         if (structure.poi) {
                             // POIs handle their own animation updates
@@ -616,10 +626,8 @@ export class World {
             return true;
         }
 
-        // Check for living cactus
-        if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
-            return true;
-        }
+        // Cactus are now passable but will deal damage (removed cactus blocking logic)
+        // Cactus damage will be handled separately when entities move onto cactus tiles
 
         // Check for village structures (POIs and NPCs), excluding the moving NPC
         if (tile.villageStructures) {

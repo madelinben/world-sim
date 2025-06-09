@@ -73,8 +73,8 @@ export class Tree extends Structure {
   }
 
   public renderAtScreenPosition(ctx: CanvasRenderingContext2D, screenX: number, screenY: number, scale = 1): void {
-    // Render at specific screen coordinates
-    this.sprite.render(ctx, screenX, screenY, scale);
+    // Use the base class method which includes health bar rendering
+    super.renderAtScreenPosition(ctx, screenX, screenY, scale);
   }
 
   private grow(): void {

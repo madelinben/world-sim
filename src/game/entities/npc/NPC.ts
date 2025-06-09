@@ -6,8 +6,15 @@ import { getAssetPath } from '../../utils/assetPath';
 type Direction = 'up' | 'down' | 'left' | 'right';
 
 
-export type NPCType = 'chicken' | 'pig' | 'sheep' | 'trader' | 'orc' | 'skeleton' | 'goblin';
+export type NPCType = 'chicken' | 'pig' | 'sheep' | 'trader' | 'orc' | 'skeleton' | 'goblin' |
+  'archer_goblin' | 'club_goblin' | 'farmer_goblin' | 'orc_shaman' | 'spear_goblin' | 'mega_slime_blue' | 'slime' |
+  'axeman_trader' | 'swordsman_trader' | 'spearman_trader' | 'farmer_trader';
 export type NPCState = 'idle' | 'wandering' | 'following' | 'fleeing' | 'attacking' | 'dead';
+
+export interface WideAttackFrame {
+  playerTileFrame: number;
+  facingTileFrame: number;
+}
 export type NPCCategory = 'animal' | 'friendly' | 'monster';
 
 export interface NPCConfig {
@@ -58,6 +65,12 @@ export class NPC {
   private lastAttackTime = 0;
   private readonly attackCooldown = 1000; // 1 second between attacks
 
+  // Attack animation properties
+  private isAttacking = false;
+  private attackAnimationTimer = 0;
+  private readonly attackAnimationDuration = 600; // 600ms attack animation
+  private attackTarget: Position | null = null;
+
   // Add breeding-related properties
   private lastBreedTime = 0;
   private readonly breedCooldown = 30000; // 30 seconds between breeding attempts
@@ -71,7 +84,7 @@ export class NPC {
   private currentMovementDecision: {
     timestamp: number;
     shouldMove: boolean;
-    behaviorType: 'crowded_escape' | 'random_avoidance' | 'exploration' | 'attraction' | 'basic_wander';
+    behaviorType: 'crowded_escape' | 'random_avoidance' | 'exploration' | 'attraction' | 'basic_wander' | 'trader_behavior';
     targetPosition?: Position;
   } | null = null;
 
@@ -133,14 +146,16 @@ export class NPC {
     if (this.state === 'dead') return;
 
     this.updateAnimation(deltaTime);
-    this.updateTileBasedMovement(deltaTime, playerPosition, playerInventory, nearbyNPCs);
+    this.updateAttackAnimation(deltaTime);
+    this.updateTileBasedMovement(deltaTime, playerPosition, playerInventory, nearbyNPCs, nearbyVillageBuildings);
   }
 
   private updateTileBasedMovement(
     deltaTime: number,
     playerPosition: Position,
     playerInventory: InventoryItem[],
-    nearbyNPCs: NPC[]
+    nearbyNPCs: NPC[],
+    nearbyVillageBuildings: Position[] = []
   ): void {
     // Handle movement cooldown (convert deltaTime from seconds to milliseconds)
     if (this.moveCooldown > 0) {
@@ -154,9 +169,14 @@ export class NPC {
     // Handle player interaction states
     this.handlePlayerInteraction(distanceToPlayer, hasWheat, playerPosition);
 
-    // Handle monster behavior - attack nearby friendly NPCs
+    // Handle monster behavior - attack nearby friendly NPCs and implement flocking
     if (this.category === 'monster') {
-      this.handleMonsterAttacks(deltaTime, nearbyNPCs);
+      this.handleMonsterBehavior(deltaTime, playerPosition, nearbyNPCs);
+    }
+
+    // Handle trader behavior - attraction to village buildings and monster avoidance
+    if (this.category === 'friendly') {
+      this.handleTraderBehavior(nearbyVillageBuildings, nearbyNPCs);
     }
 
     // Check for breeding opportunity before movement (animals only)
@@ -169,7 +189,7 @@ export class NPC {
     }
 
     // Use deterministic movement decision system
-    const decision = this.calculateMovementDecision(playerPosition, playerInventory, nearbyNPCs);
+    const decision = this.calculateMovementDecision(playerPosition, playerInventory, nearbyNPCs, nearbyVillageBuildings);
     const targetTile = decision.targetPosition ?? null;
 
     // Attempt to move to target tile
@@ -408,35 +428,268 @@ export class NPC {
     }
   }
 
-  private handleMonsterAttacks(deltaTime: number, nearbyNPCs: NPC[]): void {
+  private handleMonsterBehavior(deltaTime: number, playerPosition: Position, nearbyNPCs: NPC[]): void {
     if (this.category !== 'monster') return;
 
     const now = Date.now();
-    if (now - this.lastAttackTime < this.attackCooldown) return;
 
-    // Find nearby friendly NPCs to attack
+    // Flocking behavior - move towards friendly NPCs and player
+    const targets = [
+      { position: playerPosition, priority: 2 },
+      ...nearbyNPCs
+        .filter(npc => npc.category !== 'monster' && !npc.isDead())
+        .map(npc => ({ position: npc.position, priority: 1 }))
+    ];
+
+    if (targets.length > 0 && !this.isAttacking) {
+      // Find closest target for flocking
+      let closestTarget: Position | null = null;
+      let minDistance = Infinity;
+
+      for (const target of targets) {
+        const distance = this.getDistanceToPosition(target.position);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestTarget = target.position;
+        }
+      }
+
+      // Move towards target if not adjacent
+      if (closestTarget && minDistance > 1.5) {
+        const adjacentTile = this.getAdjacentTileTowards(closestTarget);
+        if (adjacentTile && this.canMoveTo(adjacentTile)) {
+          this.moveToPosition(adjacentTile);
+          this.moveCooldown = this.moveDelay;
+          return;
+        }
+      }
+    }
+
+    // Attack behavior - attack adjacent targets
+    if (now - this.lastAttackTime >= this.attackCooldown) {
+      // Check player
+      const playerDistance = this.getDistanceToPosition(playerPosition);
+      if (playerDistance <= 1) {
+        this.startAttack(playerPosition);
+        // Player damage should be handled by the game system
+        this.lastAttackTime = now;
+        return;
+      }
+
+      // Check nearby friendly NPCs
     for (const npc of nearbyNPCs) {
       if (npc.category !== 'monster' && !npc.isDead()) {
         const distance = this.getDistanceToNPC(npc);
-        if (distance <= 1) { // Adjacent tile
-          // Attack the NPC
-          npc.takeDamage(10);
+          if (distance <= 1) {
+            this.startAttack(npc.position);
+            npc.takeDamage(5); // Deal 5 damage as specified
           this.lastAttackTime = now;
-
           break;
+          }
         }
       }
+    }
+  }
+
+  private handleTraderBehavior(nearbyVillageBuildings: Position[], nearbyNPCs: NPC[] = []): void {
+    if (this.category !== 'friendly' || this.isAttacking) return;
+
+    // Check for nearby monsters and flee if detected
+    const nearbyMonsters = nearbyNPCs.filter(npc =>
+      npc.category === 'monster' && !npc.isDead() && this.getDistanceToNPC(npc) <= this.detectionRange
+    );
+
+    if (nearbyMonsters.length > 0) {
+      // Monster avoidance takes priority - flee from nearest monster
+      const nearestMonster = nearbyMonsters.reduce((closest, monster) => {
+        return this.getDistanceToNPC(monster) < this.getDistanceToNPC(closest) ? monster : closest;
+      });
+
+      this.state = 'fleeing';
+      const fleeTarget = this.getAdjacentTileAway(nearestMonster.position);
+      if (fleeTarget && this.canMoveTo(fleeTarget)) {
+        this.moveToPosition(fleeTarget);
+        this.moveCooldown = this.moveDelay;
+        return;
+      }
+    }
+
+    // Reset fleeing state if no monsters nearby
+    if (this.state === 'fleeing' && nearbyMonsters.length === 0) {
+      this.state = 'idle';
+    }
+
+    // Village building attraction (when not fleeing from monsters)
+    if (this.state !== 'fleeing' && nearbyVillageBuildings.length > 0) {
+      let targetBuilding: Position | null = null;
+      let bestDistance = Infinity;
+
+      for (const building of nearbyVillageBuildings) {
+        const distance = this.getDistanceToPosition(building);
+
+        // Look for buildings at optimal distance (3-5 tiles away)
+        // Avoid buildings that are too close (< 3 tiles) or too far (> 5 tiles)
+        if (distance >= 3 && distance <= 5 && distance < bestDistance) {
+          // Check if this building already has other traders nearby
+          const tradersNearBuilding = nearbyNPCs.filter(npc =>
+            npc.category === 'friendly' && npc !== this &&
+            this.getDistanceToPosition(building) <= 3
+          ).length;
+
+          // Prefer buildings with fewer traders (avoid clustering)
+          if (tradersNearBuilding < 2) {
+            bestDistance = distance;
+            targetBuilding = building;
+          }
+        }
+      }
+
+      // If we found a good building, move towards it
+      if (targetBuilding) {
+        const moveTarget = this.getAdjacentTileTowards(targetBuilding);
+        if (moveTarget && this.canMoveTo(moveTarget)) {
+          // Check spacing from other NPCs before moving
+          const spacingOk = this.checkTraderSpacing(moveTarget, nearbyNPCs);
+          if (spacingOk) {
+            this.moveToPosition(moveTarget);
+            this.moveCooldown = this.moveDelay;
+            return;
+          }
+        }
+      }
+
+      // If no good building target, do gentle wandering around village
+      if (Math.random() < 0.3) { // 30% chance to wander
+        const wanderTarget = this.getRandomAdjacentTileWithSpacing(nearbyNPCs);
+        if (wanderTarget && this.canMoveTo(wanderTarget)) {
+          this.moveToPosition(wanderTarget);
+          this.moveCooldown = this.moveDelay;
+        }
+      }
+    }
+  }
+
+  private checkTraderSpacing(targetPosition: Position, nearbyNPCs: NPC[]): boolean {
+    const targetTileX = Math.floor(targetPosition.x / 16);
+    const targetTileY = Math.floor(targetPosition.y / 16);
+
+    // Check for adequate spacing from other NPCs (2+ tile minimum)
+    for (const npc of nearbyNPCs) {
+      if (npc === this) continue;
+
+      const npcTileX = Math.floor(npc.position.x / 16);
+      const npcTileY = Math.floor(npc.position.y / 16);
+
+      const distance = Math.abs(npcTileX - targetTileX) + Math.abs(npcTileY - targetTileY);
+
+      // Maintain 2+ tile spacing from other friendly NPCs and traders
+      if ((npc.category === 'friendly' || npc.category === 'animal') && distance < 2) {
+        return false;
+      }
+
+      // Avoid direct occupation by any NPC
+      if (distance === 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private getTraderMovementTarget(nearbyNPCs: NPC[], nearbyVillageBuildings: Position[]): Position | null {
+    // Check for monsters and flee if needed
+    const nearbyMonsters = nearbyNPCs.filter(npc =>
+      npc.category === 'monster' && !npc.isDead() && this.getDistanceToNPC(npc) <= this.detectionRange
+    );
+
+    if (nearbyMonsters.length > 0) {
+      // Flee from nearest monster
+      const nearestMonster = nearbyMonsters.reduce((closest, monster) => {
+        return this.getDistanceToNPC(monster) < this.getDistanceToNPC(closest) ? monster : closest;
+      });
+      return this.getAdjacentTileAway(nearestMonster.position);
+    }
+
+    // Move towards village buildings with spacing
+    if (nearbyVillageBuildings.length > 0) {
+      for (const building of nearbyVillageBuildings) {
+        const distance = this.getDistanceToPosition(building);
+
+        // Target buildings at good distance (3-5 tiles)
+        if (distance >= 3 && distance <= 5) {
+          // Check if building has few traders nearby
+          const tradersNearBuilding = nearbyNPCs.filter(npc =>
+            npc.category === 'friendly' && npc !== this &&
+            Math.sqrt(Math.pow(npc.position.x - building.x, 2) + Math.pow(npc.position.y - building.y, 2)) / 16 <= 3
+          ).length;
+
+          if (tradersNearBuilding < 2) {
+            const moveTarget = this.getAdjacentTileTowards(building);
+            if (moveTarget && this.checkTraderSpacing(moveTarget, nearbyNPCs)) {
+              return moveTarget;
+            }
+          }
+        }
+      }
+    }
+
+    // Random wandering if no good building targets
+    if (Math.random() < 0.3) {
+      return this.getRandomAdjacentTileWithSpacing(nearbyNPCs);
+    }
+
+    return null;
+  }
+
+  public startAttack(target: Position): void {
+    this.isAttacking = true;
+    this.attackAnimationTimer = 0;
+    this.attackTarget = target;
+    this.currentFrame = 0;
+
+    // Face the target
+    const dx = target.x - this.position.x;
+    const dy = target.y - this.position.y;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      this.direction = dx > 0 ? 'right' : 'left';
+    } else {
+      this.direction = dy > 0 ? 'down' : 'up';
     }
   }
 
   private updateAnimation(deltaTime: number): void {
     if (!this.isLoaded || !this.asset) return;
 
+    const mapping = this.getSpriteMapping();
+    const frameCount = mapping?.frames ?? 4;
+
     // Convert deltaTime from seconds to milliseconds for animation timing
     this.lastFrameTime += deltaTime * 1000;
-    if (this.lastFrameTime >= this.animationDuration / 4) { // 4 frames per cycle
-      this.currentFrame = (this.currentFrame + 1) % 4;
+
+    // Only animate when moving or attacking
+    if (this.state === 'wandering' || this.state === 'following' || this.state === 'fleeing' || this.isAttacking) {
+      if (this.lastFrameTime >= this.animationDuration / frameCount) {
+        this.currentFrame = (this.currentFrame + 1) % frameCount;
       this.lastFrameTime = 0;
+      }
+    } else {
+      // Reset to idle frame when not moving
+      this.currentFrame = 0;
+      this.lastFrameTime = 0;
+    }
+  }
+
+  private updateAttackAnimation(deltaTime: number): void {
+    if (this.isAttacking) {
+      this.attackAnimationTimer += deltaTime * 1000;
+
+      if (this.attackAnimationTimer >= this.attackAnimationDuration) {
+        this.isAttacking = false;
+        this.attackAnimationTimer = 0;
+        this.attackTarget = null;
+        this.currentFrame = 0; // Reset to idle frame
+      }
     }
   }
 
@@ -488,8 +741,18 @@ export class NPC {
 
     // Calculate sprite frame based on direction and animation
     let spriteIndex = 0;
+    if (this.isAttacking) {
+      // Attack animations
+      const attackOffset = this.getAttackDirectionOffset();
+      spriteIndex = attackOffset + this.currentFrame;
+    } else {
+      // Movement animations
     const directionOffset = this.getDirectionOffset();
     spriteIndex = directionOffset + this.currentFrame;
+    }
+
+    // Special case: farmer_goblin left direction uses flipped right frames
+    const shouldFlip = this.type === 'farmer_goblin' && this.direction === 'left';
 
     // Render the sprite
     const spriteSize = 16;
@@ -497,26 +760,173 @@ export class NPC {
     const spriteX = (spriteIndex % spritesPerRow) * spriteSize;
     const spriteY = Math.floor(spriteIndex / spritesPerRow) * spriteSize;
 
+    if (shouldFlip) {
+      // Flip horizontally for farmer_goblin left direction
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        this.sprite,
+        spriteX, spriteY, spriteSize, spriteSize,
+        -(x + spriteSize), y, spriteSize, spriteSize
+      );
+      ctx.restore();
+    } else {
     ctx.drawImage(
       this.sprite,
       spriteX, spriteY, spriteSize, spriteSize,
       x, y, spriteSize, spriteSize
     );
+    }
 
     // Render health bar if damaged
     if (this.health < this.maxHealth && !this.isDead()) {
       this.renderHealthBar(ctx, x, y);
     }
+
+    // Render wide attack animation for SpearGoblin if attacking
+    if (this.isAttacking && this.type === 'spear_goblin' && this.attackTarget) {
+      this.renderWideAttack(ctx, x, y);
+    }
   }
 
   private getDirectionOffset(): number {
-    // Each direction has 4 frames, arranged as: down, left, right, up
+    const mapping = this.getSpriteMapping();
+    if (!mapping) return 0;
+
     switch (this.direction) {
-      case 'down': return 0;
-      case 'left': return 4;
-      case 'right': return 8;
-      case 'up': return 12;
-      default: return 0;
+      case 'down': return mapping.down;
+      case 'up': return mapping.up;
+      case 'left': return mapping.left;
+      case 'right': return mapping.right;
+      default: return mapping.down;
+    }
+  }
+
+  private getAttackDirectionOffset(): number {
+    const mapping = this.getAttackSpriteMapping();
+    if (!mapping) return this.getDirectionOffset(); // Fallback to movement frames
+
+    switch (this.direction) {
+      case 'down': return mapping.down;
+      case 'up': return mapping.up;
+      case 'left': return mapping.left;
+      case 'right': return mapping.right;
+      default: return mapping.down;
+    }
+  }
+
+  private getAttackSpriteMapping(): { down: number; up: number; left: number; right: number; frames: number } | null {
+    switch (this.type) {
+      // Monster NPCs with attack animations
+      case 'archer_goblin':
+        return { down: 25, up: 30, left: 35, right: 40, frames: 5 };
+      case 'club_goblin':
+        return { down: 25, up: 30, right: 35, left: 40, frames: 5 };
+      case 'farmer_goblin':
+        return { down: 25, up: 30, right: 35, left: 35, frames: 5 }; // left uses flipped right
+      case 'orc':
+        return { down: 25, up: 31, right: 37, left: 43, frames: 5 };
+      case 'orc_shaman':
+        return { down: 25, up: 30, right: 35, left: 40, frames: 5 };
+      case 'spear_goblin':
+        return { down: 25, up: 30, right: 35, left: 40, frames: 5 };
+      case 'mega_slime_blue':
+      case 'slime':
+        return { down: 25, left: 31, right: 37, up: 43, frames: 6 };
+
+      // Trader NPCs with attack animations
+      case 'axeman_trader':
+        return { down: 25, up: 31, right: 37, left: 43, frames: 5 };
+      case 'swordsman_trader':
+      case 'spearman_trader':
+        return { down: 25, up: 30, right: 35, left: 40, frames: 5 };
+      case 'farmer_trader':
+        return { down: 45, up: 50, right: 55, left: 60, frames: 5 };
+
+      // Animals don't have attack animations
+      default:
+        return null;
+    }
+  }
+
+  private moveToPosition(target: Position): void {
+    this.position = { ...target };
+    this.lastMovementTime = Date.now();
+  }
+
+  private renderWideAttack(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    if (!this.attackTarget || !this.sprite) return;
+
+    // Calculate facing tile position
+    const facingTileX = x + (this.direction === 'right' ? 16 : this.direction === 'left' ? -16 : 0);
+    const facingTileY = y + (this.direction === 'down' ? 16 : this.direction === 'up' ? -16 : 0);
+
+    // Get wide attack frame mapping
+    const wideFrames = this.getWideAttackFrames();
+    if (!wideFrames) return;
+
+    const spriteSize = 16;
+    const spritesPerRow = this.sprite.width / spriteSize;
+
+    // Render facing tile animation frame
+    const facingSpriteX = (wideFrames.facingTileFrame % spritesPerRow) * spriteSize;
+    const facingSpriteY = Math.floor(wideFrames.facingTileFrame / spritesPerRow) * spriteSize;
+
+    ctx.drawImage(
+      this.sprite,
+      facingSpriteX, facingSpriteY, spriteSize, spriteSize,
+      facingTileX, facingTileY, spriteSize, spriteSize
+    );
+  }
+
+  private getWideAttackFrames(): WideAttackFrame | null {
+    if (this.type !== 'spear_goblin') return null;
+
+    // SpearGoblin wide attack - 2-tile attack animation
+    const baseOffset = this.getAttackDirectionOffset();
+    return {
+      playerTileFrame: baseOffset + this.currentFrame,
+      facingTileFrame: baseOffset + this.currentFrame + 10 // Offset for facing tile frames
+    };
+  }
+
+  private getSpriteMapping(): { down: number; up: number; left: number; right: number; frames: number } | null {
+    switch (this.type) {
+      // Monster NPCs
+      case 'archer_goblin':
+        return { down: 0, up: 5, left: 10, right: 15, frames: 5 };
+      case 'club_goblin':
+        return { down: 0, up: 5, right: 10, left: 15, frames: 5 };
+      case 'farmer_goblin':
+        // Note: left uses flipped right frames (10-14), will need special handling
+        return { down: 0, up: 5, right: 10, left: 10, frames: 5 };
+      case 'orc':
+        return { down: 0, up: 6, right: 12, left: 18, frames: 5 };
+      case 'orc_shaman':
+        return { down: 0, up: 5, right: 10, left: 15, frames: 5 };
+      case 'spear_goblin':
+        return { down: 0, up: 5, right: 10, left: 15, frames: 5 };
+      case 'mega_slime_blue':
+      case 'slime':
+        return { down: 0, left: 6, right: 12, up: 18, frames: 6 };
+
+      // Trader NPCs
+      case 'axeman_trader':
+        return { down: 0, up: 6, right: 12, left: 18, frames: 5 };
+      case 'swordsman_trader':
+      case 'spearman_trader':
+        return { down: 0, up: 5, right: 10, left: 15, frames: 5 };
+      case 'farmer_trader':
+        return { down: 20, up: 25, right: 30, left: 35, frames: 5 };
+
+      // Default animal mappings
+      case 'chicken':
+      case 'pig':
+      case 'sheep':
+        return { down: 0, left: 4, right: 8, up: 12, frames: 4 };
+
+      default:
+        return { down: 0, left: 4, right: 8, up: 12, frames: 4 };
     }
   }
 
@@ -563,6 +973,23 @@ export class NPC {
       case 'orc':
       case 'skeleton':
       case 'goblin': return 40;
+
+      // Monster NPCs
+      case 'archer_goblin': return 60;
+      case 'club_goblin': return 80;
+      case 'farmer_goblin': return 70;
+      case 'orc': return 120;
+      case 'orc_shaman': return 100;
+      case 'spear_goblin': return 90;
+      case 'mega_slime_blue': return 150;
+      case 'slime': return 40;
+
+      // Trader NPCs
+      case 'axeman_trader':
+      case 'swordsman_trader':
+      case 'spearman_trader':
+      case 'farmer_trader': return 50;
+
       default: return 25;
     }
   }
@@ -580,6 +1007,22 @@ export class NPC {
       case 'orc':
       case 'skeleton':
       case 'goblin': return [{ type: 'copper_ore', quantity: 1 }];
+
+      // Monster NPCs
+      case 'archer_goblin':
+      case 'club_goblin':
+      case 'farmer_goblin':
+      case 'spear_goblin':
+      case 'slime': return [{ type: 'monster_drop', quantity: 1 }];
+      case 'orc_shaman': return [{ type: 'monster_drop', quantity: 2 }];
+      case 'mega_slime_blue': return [{ type: 'monster_drop', quantity: 3 }];
+
+      // Trader NPCs
+      case 'axeman_trader':
+      case 'swordsman_trader':
+      case 'spearman_trader':
+      case 'farmer_trader': return [{ type: 'gold_ingot', quantity: 1 }];
+
       default: return [];
     }
   }
@@ -591,10 +1034,21 @@ export class NPC {
       case 'sheep':
         return 'animal';
       case 'trader':
+      case 'axeman_trader':
+      case 'swordsman_trader':
+      case 'spearman_trader':
+      case 'farmer_trader':
         return 'friendly';
       case 'orc':
       case 'skeleton':
       case 'goblin':
+      case 'archer_goblin':
+      case 'club_goblin':
+      case 'farmer_goblin':
+      case 'orc_shaman':
+      case 'spear_goblin':
+      case 'mega_slime_blue':
+      case 'slime':
         return 'monster';
       default:
         return 'animal';
@@ -828,9 +1282,9 @@ export class NPC {
   }
 
   // Calculate movement decision that can be reused for both intention and execution
-  private calculateMovementDecision(playerPosition: Position, playerInventory: InventoryItem[], nearbyNPCs: NPC[]): {
+  private calculateMovementDecision(playerPosition: Position, playerInventory: InventoryItem[], nearbyNPCs: NPC[], nearbyVillageBuildings: Position[] = []): {
     shouldMove: boolean;
-    behaviorType: 'crowded_escape' | 'random_avoidance' | 'exploration' | 'attraction' | 'basic_wander';
+    behaviorType: 'crowded_escape' | 'random_avoidance' | 'exploration' | 'attraction' | 'basic_wander' | 'trader_behavior';
     targetPosition?: Position;
   } {
     // Cache the decision for 100ms to ensure consistency between intention and execution
@@ -842,7 +1296,20 @@ export class NPC {
     const distanceToPlayer = this.getDistanceToPosition(playerPosition);
     const hasWheat = playerInventory.some(item => item?.type === 'wheat');
 
-    // Handle special movement states (non-random)
+    // Handle trader-specific movement (different from animals)
+    if (this.category === 'friendly') {
+      // Traders have their own flocking behavior
+      const traderTarget = this.getTraderMovementTarget(nearbyNPCs, nearbyVillageBuildings);
+      const decision = {
+        shouldMove: traderTarget !== null,
+        behaviorType: 'trader_behavior' as const,
+        targetPosition: traderTarget ?? undefined
+      };
+      this.currentMovementDecision = { timestamp: now, ...decision };
+      return decision;
+    }
+
+    // Handle special movement states (non-random) - for animals and monsters
     if (this.state === 'following' && this.category === 'animal' && hasWheat && distanceToPlayer <= 5) {
       const decision = {
         shouldMove: true,
@@ -946,9 +1413,9 @@ export class NPC {
   }
 
   // Get the intended movement target for this NPC without actually moving
-  public getMovementIntention(playerPosition: Position, playerInventory: InventoryItem[], nearbyNPCs: NPC[]): Position | null {
+  public getMovementIntention(playerPosition: Position, playerInventory: InventoryItem[], nearbyNPCs: NPC[], nearbyVillageBuildings: Position[] = []): Position | null {
     // Use the same deterministic decision system as actual movement
-    const decision = this.calculateMovementDecision(playerPosition, playerInventory, nearbyNPCs);
+    const decision = this.calculateMovementDecision(playerPosition, playerInventory, nearbyNPCs, nearbyVillageBuildings);
     return decision.targetPosition ?? null;
   }
 }

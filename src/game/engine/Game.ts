@@ -7,7 +7,8 @@ import { Camera } from '~/game/systems/Camera';
 import { WorldGenerator } from '~/game/world/WorldGenerator';
 import { AnimationSystem } from '~/game/systems/AnimationSystem';
 import { Player as PlayerEntity } from '~/game/entities/player/Player';
-import { InventoryUI } from '~/game/ui/InventoryUI';
+
+import { PlayerScoreSystem } from '~/game/systems/PlayerScoreSystem';
 
 // Player helper class for adjacent tile logic
 export class Player {
@@ -33,7 +34,8 @@ export class Game {
     private movement!: Movement;
     private world!: World;
     private animationSystem!: AnimationSystem;
-    private inventoryUI!: InventoryUI;
+
+    private scoreSystem!: PlayerScoreSystem;
     private canvas: HTMLCanvasElement;
     private lastPlayerPos = { x: 0, y: 0 };
     private lastNPCs = '';
@@ -74,13 +76,17 @@ export class Game {
         this.world = new World(this.camera, new WorldGenerator(seed));
         this.movement = new Movement(this.world);
         this.animationSystem = new AnimationSystem();
-        this.inventoryUI = new InventoryUI();
+
+        this.scoreSystem = new PlayerScoreSystem();
 
         // Connect UI systems
         this.camera.uiManager.setInventory(this.player.inventory);
 
         // Connect world with animation system
         this.world.setAnimationSystem(this.animationSystem);
+
+        // Connect player to movement system for sprite animations
+        this.movement.setPlayer(this.player);
 
         // Set up direction change callback to always update facing direction
         this.movement.setDirectionChangeCallback((direction, moved) => {
@@ -105,58 +111,42 @@ export class Game {
         this.gameLoop.stop();
     }
 
-        private update(deltaTime: number, forceUpdate = false): void {
-        // Handle new input actions BEFORE resetting justPressed state
-        this.handlePlayerActions();
-        this.handleMouseInput();
+    public update(deltaTime: number): void {
+        // Game is always running once started
 
+        // Update controls (but don't clear justPressed yet)
         this.controls.update();
 
-        // Mouse drag camera movement
-        let changed = false;
-        if (this.controls.dragDelta.x !== 0 || this.controls.dragDelta.y !== 0) {
-            this.camera.position.x -= this.controls.dragDelta.x;
-            this.camera.position.y -= this.controls.dragDelta.y;
-            this.controls.dragDelta = { x: 0, y: 0 };
-            changed = true;
-        }
+        // Handle player actions first (while justPressed states are still valid)
+        this.handlePlayerActions();
 
-        // Check player movement
-        const player = this.gameState.player;
-        if (player.position.x !== this.lastPlayerPos.x || player.position.y !== this.lastPlayerPos.y) {
-            this.lastPlayerPos = { ...player.position };
-            changed = true;
-        }
+        // Handle mouse input
+        this.handleMouseInput();
 
-        // Always update movement and camera for smooth interaction
-        this.movement.update(player, this.controls);
-        this.camera.update(player.position);
+        // Update movement system
+        this.movement.update(this.gameState.player, this.controls);
 
-        // Update player entity position to match game state
-        this.player.setPosition(player.position);
+        // Update player animation
+        this.player.update(deltaTime);
 
-        // Always update the world for NPCs and animations
-        this.world.update(deltaTime, player.position, this.player.getInventoryItems().filter(item => item !== null));
+        // Update camera
+        this.camera.update(this.gameState.player.position);
 
-        // Only update expensive cache invalidation if forced or something changed
-        if (forceUpdate || changed) {
-            // Check NPCs only when forced
-            const npcsStr = JSON.stringify(this.gameState.world.npcs);
-            if (npcsStr !== this.lastNPCs) {
-                this.lastNPCs = npcsStr;
-                changed = true;
-            }
+        // Update world
+        const inventoryItems = this.player.getInventoryItems().filter(item => item !== null);
+        this.world.update(deltaTime, this.gameState.player.position, inventoryItems);
 
-            // Check POIs only when forced
-            const poisStr = JSON.stringify(this.gameState.world.pois);
-            if (poisStr !== this.lastPOIs) {
-                this.lastPOIs = poisStr;
-                changed = true;
-            }
-        }
+        // Initialize villages in score system when discovered
+        this.initializeNearbyVillages();
 
-        // Always update animations for smooth tree growth
+        // Update animation system
         this.animationSystem.update(deltaTime);
+
+        // Check for cactus damage to player
+        this.checkCactusDamage();
+
+        // Clear justPressed states after all actions have been processed
+        this.controls.clearJustPressed();
     }
 
     private render(): void {
@@ -172,24 +162,17 @@ export class Game {
         this.renderPlayer(ctx);
         this.animationSystem.render(ctx, this.camera);
 
-        // Render inventory UI on top of everything
-        this.inventoryUI.render(
-            ctx,
-            this.camera,
-            this.player.getInventoryItems(),
-            this.player.getSelectedSlot()
-        );
-
-        // Render UI Manager (Pokemon DS-style text box and 3DS-style inventory)
+        // Render UI Manager (Pokemon DS-style text box and inventory)
         this.camera.renderUI();
     }
 
     private renderPlayer(ctx: CanvasRenderingContext2D): void {
         // Player is always centered on screen
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        ctx.fillStyle = 'red';
-        ctx.fillRect(centerX - 5, centerY - 5, 10, 10);
+        const centerX = this.canvas.width / 2 - 8; // Center the 16x16 sprite
+        const centerY = this.canvas.height / 2 - 8;
+
+        // Use the player's new sprite rendering method
+        this.player.render(ctx, centerX, centerY);
     }
 
     private handlePlayerActions(): void {
@@ -214,15 +197,29 @@ export class Game {
             this.player.openInventory();
         }
 
+        // Update player direction if movement keys are pressed (even if no movement happens)
+        if (this.controls.isKeyPressed('up')) {
+            this.player.setDirection('up');
+        } else if (this.controls.isKeyPressed('down')) {
+            this.player.setDirection('down');
+        } else if (this.controls.isKeyPressed('left')) {
+            this.player.setDirection('left');
+        } else if (this.controls.isKeyPressed('right')) {
+            this.player.setDirection('right');
+        }
+
         // Handle attack (Q)
         if (this.controls.wasKeyJustPressed('attack')) {
             console.log('Attack key detected - executing attack');
+            this.player.startAttack(); // Trigger attack animation
             this.logFacingTile();
             this.handleAttack();
         }
 
         // Handle interact (F)
         if (this.controls.wasKeyJustPressed('interact')) {
+            console.log('Interact key detected - executing interact with attack animation');
+            this.player.startAttack(); // Trigger attack animation for interact too
             this.logFacingTile();
             this.handleInteract();
         }
@@ -231,20 +228,14 @@ export class Game {
     }
 
     private handleMouseInput(): void {
-        const mouseClick = this.controls.getMouseClick();
-        if (mouseClick) {
-            // Check if click is in inventory area
-            if (this.inventoryUI.isPointInInventoryArea(mouseClick.x, mouseClick.y, this.canvas.width, this.canvas.height)) {
-                const slotIndex = this.inventoryUI.getSlotAt(mouseClick.x, mouseClick.y, this.canvas.width);
-                if (slotIndex !== null) {
-                    this.player.selectInventorySlot(slotIndex);
-                    console.log(`Mouse clicked inventory slot ${slotIndex + 1}`);
-                }
-            }
-        }
+        // Mouse input currently disabled - inventory controlled via 1-9 keys only
+        // const mouseClick = this.controls.getMouseClick();
+        // if (mouseClick) {
+        //     // Future: implement mouse controls for game world interactions
+        // }
     }
 
-        private handleAttack(): void {
+    private handleAttack(): void {
         const facingPos = this.player.getFacingPosition(WorldGenerator.TILE_SIZE);
         const tileX = Math.floor(facingPos.x / WorldGenerator.TILE_SIZE);
         const tileY = Math.floor(facingPos.y / WorldGenerator.TILE_SIZE);
@@ -260,7 +251,7 @@ export class Game {
                 console.log(`Tree health before attack: ${tree.getHealth()}/${tree.getMaxHealth()}`);
                 const result = tree.takeDamage(this.player.attackDamage);
 
-                                if (result.destroyed) {
+                if (result.destroyed) {
                     console.log(`🌳 Tree destroyed! Dropped ${result.dropValue} ${result.dropType}`);
                     const added = this.player.addToInventory(result.dropType, result.dropValue);
                     if (added) {
@@ -310,10 +301,25 @@ export class Game {
         else {
             const npc = this.world.getNPCAt(tileX, tileY);
             if (npc) {
-                            npc.takeDamage(this.player.attackDamage);
+                // Track score based on NPC category and village area
+                const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
 
-            if (npc.isDead()) {
+                if (nearestVillage && this.scoreSystem.isInVillageArea(this.gameState.player.position, nearestVillage)) {
+                    if (npc.category === 'monster') {
+                        // Positive score for killing monsters in village area
+                        this.scoreSystem.onMonsterKilled(nearestVillage);
+                    } else if (npc.category === 'animal') {
+                        // Negative score for attacking village animals
+                        this.scoreSystem.onAnimalAttacked(nearestVillage);
+                    } else if (npc.category === 'friendly') {
+                        // Negative score for attacking village traders
+                        this.scoreSystem.onTraderAttacked(nearestVillage);
+                    }
+                }
 
+                npc.takeDamage(this.player.attackDamage);
+
+                if (npc.isDead()) {
                     // Get drops and add to inventory
                     const drops = this.world.removeDeadNPCAt(tileX, tileY);
                     for (const drop of drops) {
@@ -324,7 +330,6 @@ export class Game {
                             console.log(`❌ Inventory full! Could not add ${drop.quantity} ${drop.type}`);
                         }
                     }
-
                 }
             } else {
                 console.log('Nothing to attack in that direction');
@@ -358,6 +363,32 @@ export class Game {
             return;
         }
 
+        // Check for NPCs (trader interaction)
+        const npc = this.world.getNPCAt(tileX, tileY);
+        if (npc && npc.category === 'friendly') {
+            console.log(`Interacting with trader: ${npc.type}`);
+
+            // Find nearest village and get trader comment based on score
+            const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
+            let comment = "Hello there, traveler.";
+            let villageName = "Unknown Village";
+
+            if (nearestVillage) {
+                const villageScore = this.scoreSystem.getVillageScore(nearestVillage);
+                if (villageScore) {
+                    comment = this.scoreSystem.getTraderComment(nearestVillage);
+                    villageName = villageScore.villageName;
+                }
+            }
+
+            this.camera.uiManager.showTextBox({
+                text: comment,
+                title: `Trader in ${villageName}`,
+                villageName: villageName
+            });
+            return;
+        }
+
         // Check for other interactable structures
         if (tile?.trees && tile.trees.length > 0) {
             console.log('Interacting with tree - could harvest fruit, check growth, etc.');
@@ -367,8 +398,6 @@ export class Game {
             console.log('Nothing to interact with in that direction');
         }
     }
-
-
 
     private logFacingTile(): void {
         const facingPos = this.player.getFacingPosition(WorldGenerator.TILE_SIZE);
@@ -405,6 +434,83 @@ export class Game {
         const savedState = localStorage.getItem('gameState');
         if (savedState) {
             this.gameState = JSON.parse(savedState) as GameState;
+        }
+    }
+
+    private initializeNearbyVillages(): void {
+        // Check for village POIs in the current area to initialize score tracking
+        const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
+        const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
+
+        // Check a 10x10 area around the player for village wells
+        for (let dx = -5; dx <= 5; dx++) {
+            for (let dy = -5; dy <= 5; dy++) {
+                const checkX = playerTileX + dx;
+                const checkY = playerTileY + dy;
+
+                const poi = this.world.getPOIAt(checkX, checkY);
+                if (poi?.type === 'water_well') {
+                    const villageName = poi.customData?.villageName as string ?? 'Unknown Village';
+
+                    // Generate village ID from grid coordinates
+                    const villageGridX = Math.floor(checkX / 50);
+                    const villageGridY = Math.floor(checkY / 50);
+                    const villageId = `village_${villageGridX}_${villageGridY}`;
+
+                    this.scoreSystem.initializeVillage(villageId, villageName);
+                }
+            }
+        }
+    }
+
+    private checkCactusDamage(): void {
+        // Check player position for cactus damage
+        const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
+        const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
+        const playerTile = this.world.getTile(playerTileX, playerTileY);
+
+        // Check if player is on a cactus tile
+        if (playerTile?.cactus && playerTile.cactus.length > 0) {
+            const livingCactus = playerTile.cactus.filter(cactus => cactus.getHealth() > 0);
+            if (livingCactus.length > 0) {
+                console.log(`🌵 Player taking cactus damage! Standing on cactus at (${playerTileX}, ${playerTileY})`);
+                this.player.takeDamage(5);
+
+                // Visual/audio feedback could be added here
+                if (this.player.health <= 0) {
+                    console.log(`💀 Player died from cactus damage!`);
+                }
+            }
+        }
+
+        // Check all visible NPCs for cactus damage by iterating through visible tiles
+        // Since we don't have direct access to all NPCs, we'll check each visible tile for NPCs
+        const viewRadiusInTiles = 20; // Check area around player
+        const playerTileXCenter = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
+        const playerTileYCenter = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
+
+        for (let dx = -viewRadiusInTiles; dx <= viewRadiusInTiles; dx++) {
+            for (let dy = -viewRadiusInTiles; dy <= viewRadiusInTiles; dy++) {
+                const checkX = playerTileXCenter + dx;
+                const checkY = playerTileYCenter + dy;
+                const npc = this.world.getNPCAt(checkX, checkY);
+
+                if (npc && !npc.isDead()) {
+                    const npcTile = this.world.getTile(checkX, checkY);
+
+                    if (npcTile?.cactus && npcTile.cactus.length > 0) {
+                        const livingCactus = npcTile.cactus.filter(cactus => cactus.getHealth() > 0);
+                        if (livingCactus.length > 0) {
+                            console.log(`🌵 ${npc.type} taking cactus damage at (${checkX}, ${checkY})`);
+                            npc.takeDamage(5);
+
+                            if (npc.isDead()) {
+                                console.log(`💀 ${npc.type} died from cactus damage!`);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

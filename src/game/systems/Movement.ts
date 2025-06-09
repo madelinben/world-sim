@@ -5,6 +5,7 @@ import { type World } from '../world/World';
 import type { Tree } from '../entities/structure/Tree';
 import type { Cactus } from '../entities/structure/Cactus';
 import type { VillageStructure } from '../world/VillageGenerator';
+import type { Player } from '../entities/player/Player';
 
 export class Movement {
     private readonly TILE_SIZE = WorldGenerator.TILE_SIZE; // Use unified tile size
@@ -13,9 +14,14 @@ export class Movement {
     private world: World;
     private onMoveCallback?: (direction: 'up' | 'down' | 'left' | 'right') => void;
     private onDirectionChangeCallback?: (direction: 'up' | 'down' | 'left' | 'right', moved: boolean) => void;
+    private player?: Player; // Reference to player for sprite animations
 
     constructor(world: World) {
         this.world = world;
+    }
+
+    public setPlayer(player: Player): void {
+        this.player = player;
     }
 
     public setMoveCallback(callback: (direction: 'up' | 'down' | 'left' | 'right') => void): void {
@@ -39,12 +45,8 @@ export class Movement {
             if (hasLivingTrees) return false;
         }
 
-        // Check for cactus (impassable when present and alive)
-        if (tile.cactus && tile.cactus.length > 0) {
-            // Allow passage if all cactus are destroyed
-            const hasLivingCactus = tile.cactus.some(cactus => cactus.getHealth() > 0);
-            if (hasLivingCactus) return false;
-        }
+        // Cactus are now passable but will deal damage (removed cactus blocking logic)
+        // Cactus damage will be handled separately in the game engine
 
         // Check for village structures (POIs and NPCs)
         if (tile.villageStructures && tile.villageStructures.length > 0) {
@@ -67,8 +69,6 @@ export class Movement {
     private canMoveFromMud(): boolean {
         return Math.random() < 1/3; // 1 in 3 chance to move
     }
-
-
 
     public update(player: PlayerState, controls: Controls): void {
         // Handle movement cooldown
@@ -111,7 +111,14 @@ export class Movement {
             moveDirection = 'right';
         }
 
-                // Check if we can move to the new position
+        // Set player moving state for sprite animation
+        const isMoving = attemptedMove && (controls.isKeyPressed('up') || controls.isKeyPressed('down') ||
+                                         controls.isKeyPressed('left') || controls.isKeyPressed('right'));
+        if (this.player) {
+            this.player.setMoving(isMoving);
+        }
+
+        // Check if we can move to the new position
         if (attemptedMove) {
             const targetTile = this.world.getTile(newPosition.x / this.TILE_SIZE, newPosition.y / this.TILE_SIZE);
             if (this.canMoveToTile(targetTile)) {
@@ -143,6 +150,11 @@ export class Movement {
             // Always trigger direction change callback when a movement was attempted
             if (moveDirection && this.onDirectionChangeCallback) {
                 this.onDirectionChangeCallback(moveDirection, actuallyMoved);
+            }
+        } else {
+            // Not attempting to move, stop animation
+            if (this.player) {
+                this.player.setMoving(false);
             }
         }
 

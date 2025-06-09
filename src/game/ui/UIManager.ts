@@ -13,11 +13,19 @@ export class UIManager {
   private textBox: TextBoxOptions = { text: '', visible: false };
   private inventory: Inventory | null = null;
   private fontLoaded = false;
+  private inventoryUIVisible = false; // New inventory UI state
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     void this.loadPixelFont();
+
+    // Add event listener for 'E' key to toggle inventory UI
+    window.addEventListener('keydown', (event) => {
+      if (event.key.toLowerCase() === 'e') {
+        this.toggleInventoryUI();
+      }
+    });
   }
 
   private async loadPixelFont(): Promise<void> {
@@ -50,6 +58,15 @@ export class UIManager {
     return this.textBox.visible;
   }
 
+  public toggleInventoryUI(): void {
+    this.inventoryUIVisible = !this.inventoryUIVisible;
+    console.log(`Inventory UI ${this.inventoryUIVisible ? 'opened' : 'closed'}`);
+  }
+
+  public isInventoryUIVisible(): boolean {
+    return this.inventoryUIVisible;
+  }
+
   public generateNoticeText(villageName: string): string {
     const welcomeMessages = [
       `Welcome to ${villageName}!`,
@@ -76,6 +93,9 @@ export class UIManager {
 
   public render(): void {
     this.renderInventory();
+    if (this.inventoryUIVisible) {
+      this.renderInventoryUI();
+    }
     if (this.textBox.visible) {
       this.renderTextBox();
     }
@@ -86,59 +106,153 @@ export class UIManager {
 
     const canvas = this.canvas;
     const ctx = this.ctx;
+    const selectedSlot = this.inventory.getSelectedSlot();
 
-    // Inventory positioning (right side of screen)
+    // Vertical column inventory configuration
     const slotSize = 50;
     const slotPadding = 8;
-    const inventoryPadding = 20;
-    const inventoryWidth = slotSize + (slotPadding * 2);
-    const totalHeight = (slotSize + slotPadding) * 9 - slotPadding;
-    const startX = canvas.width - inventoryWidth - inventoryPadding;
-    const startY = (canvas.height - totalHeight) / 2;
+    const inventoryPadding = 12;
+    const slots = 9; // 9 slots total in vertical column
 
-    // Render each inventory slot with bubble effect
+    // Calculate inventory panel dimensions (single column)
+    const panelWidth = slotSize + (inventoryPadding * 2);
+    const panelHeight = (slotSize + slotPadding) * slots - slotPadding + (inventoryPadding * 2);
+
+    // Position at right side, vertically centered
+    const panelX = canvas.width - panelWidth - 15;
+    const panelY = (canvas.height - panelHeight) / 2;
+
+    // Draw inventory background panel
+    this.drawBubble(ctx, panelX, panelY, panelWidth, panelHeight, 8, '#f8f9fa', '#dee2e6');
+
+    // Render each inventory slot vertically (only first 9 slots)
     for (let i = 0; i < 9; i++) {
-      const slotX = startX + slotPadding;
-      const slotY = startY + (i * (slotSize + slotPadding));
+      const slotX = panelX + inventoryPadding;
+      const slotY = panelY + inventoryPadding + (i * (slotSize + slotPadding));
 
-      // Get inventory item for this slot
       const item = this.inventory.getItem(i);
-      const isSelected = this.inventory.getSelectedSlot() === i;
+      const isSelected = i === selectedSlot;
 
-      // Draw bubble background for slot
-      const bubbleColor = isSelected ? '#e8f4fd' : '#ffffff';
-      const borderColor = isSelected ? '#3498db' : '#bdc3c7';
+      this.renderInventorySlot(ctx, slotX, slotY, slotSize, item, isSelected, i + 1);
+    }
+  }
 
-      this.drawBubble(ctx, slotX, slotY, slotSize, slotSize, 8, bubbleColor, borderColor);
+  private renderInventorySlot(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    size: number,
+    item: InventoryItem | null,
+    isSelected: boolean,
+    slotNumber: number
+  ): void {
+    // Draw slot background bubble
+    const bgColor = isSelected ? '#e3f2fd' : '#ffffff';
+    const borderColor = isSelected ? '#2196f3' : '#bdc3c7';
+    this.drawBubble(ctx, x, y, size, size, 4, bgColor, borderColor);
 
-      // Draw slot number
-      ctx.fillStyle = '#7f8c8d';
-      ctx.font = 'bold 12px Arial';
-      ctx.textAlign = 'left';
-      ctx.fillText((i + 1).toString(), slotX + 4, slotY + 14);
+    // Draw slot number in top-left corner
+    ctx.save();
+    ctx.fillStyle = '#666666';
+    ctx.font = this.fontLoaded ? '6px "Press Start 2P"' : '10px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(slotNumber.toString(), x + 2, y + 2);
+    ctx.restore();
 
-      // Draw item if present
-      if (item && item.quantity > 0) {
-        // Item icon area (simplified for now - could render actual item sprites)
-        ctx.fillStyle = '#2ecc71';
-        ctx.fillRect(slotX + 8, slotY + 18, 34, 24);
+    // Draw item if present
+    if (item && item.quantity > 0) {
+      // Simple colored circle for item representation
+      const itemColor = this.getItemColor(item.type);
+      const centerX = x + size / 2;
+      const centerY = y + size / 2;
+      const radius = size * 0.25;
 
-        // Item type text
+      ctx.save();
+      ctx.fillStyle = itemColor;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#333333';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+
+      // Draw quantity if > 1
+      if (item.quantity > 1) {
+        ctx.save();
         ctx.fillStyle = '#ffffff';
-        ctx.font = '10px Arial';
-        ctx.textAlign = 'center';
-        const displayText = item.type.slice(0, 4); // First 4 chars
-        ctx.fillText(displayText, slotX + 25, slotY + 32);
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.font = this.fontLoaded ? '5px "Press Start 2P"' : '8px Arial';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
 
-        // Quantity
-        if (item.quantity > 1) {
-          ctx.fillStyle = '#e74c3c';
-          ctx.font = 'bold 10px Arial';
-          ctx.textAlign = 'right';
-          ctx.fillText(item.quantity.toString(), slotX + slotSize - 4, slotY + slotSize - 4);
-        }
+        const text = item.quantity.toString();
+        const textX = x + size - 2;
+        const textY = y + size - 2;
+
+        ctx.strokeText(text, textX, textY);
+        ctx.fillText(text, textX, textY);
+        ctx.restore();
       }
     }
+  }
+
+  private getItemColor(itemType: string): string {
+    // Color mapping for different item types
+    const colors: Record<string, string> = {
+      'wood': '#8d6e63',
+      'stone': '#607d8b',
+      'wheat': '#ffc107',
+      'water': '#2196f3',
+      'cactus_fruit': '#4caf50',
+      'meat': '#f44336',
+      'wool': '#ffffff',
+      'egg': '#fff9c4',
+      'milk': '#f5f5f5'
+    };
+
+    return colors[itemType] ?? '#9e9e9e';
+  }
+
+  private renderInventoryUI(): void {
+    if (!this.inventoryUIVisible) return;
+
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+
+    // Calculate inventory dimensions (same as in renderInventory)
+    const slotSize = 50;
+    const inventoryPadding = 12;
+    const inventoryPanelWidth = slotSize + (inventoryPadding * 2); // 74px
+    const spaceFromInventoryToEdge = 15; // Space from inventory to right edge
+
+    // Calculate available space for UI components (excluding inventory panel)
+    const availableWidth = canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge;
+
+    // Calculate inventory UI dimensions to match text box width and inventory height
+    const slots = 9;
+    const slotPadding = 8;
+    const inventoryUIHeight = (slotSize + slotPadding) * slots - slotPadding + (inventoryPadding * 2); // Same as inventory panel height
+    const inventoryUIWidth = availableWidth - (20 * 2); // Same width calculation as text box (padding = 20)
+    const inventoryUIX = (availableWidth - inventoryUIWidth) / 2; // Center horizontally in available space
+    const inventoryUIY = (canvas.height - inventoryUIHeight) / 2; // Vertically centered
+
+    // Draw inventory UI bubble
+    this.drawBubble(ctx, inventoryUIX, inventoryUIY, inventoryUIWidth, inventoryUIHeight, 15, '#f8f9fa', '#dee2e6');
+
+    // Add title
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = this.fontLoaded ? '12px "Press Start 2P"' : 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Inventory Details', inventoryUIX + inventoryUIWidth / 2, inventoryUIY + 30);
+
+    // Add placeholder content
+    ctx.fillStyle = '#34495e';
+    ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '14px Arial';
+    ctx.fillText('Press E to close', inventoryUIX + inventoryUIWidth / 2, inventoryUIY + inventoryUIHeight - 30);
   }
 
   private renderTextBox(): void {
@@ -149,17 +263,21 @@ export class UIManager {
 
     // Calculate inventory dimensions (same as in renderInventory)
     const slotSize = 50;
-    const slotPadding = 8;
-    const inventoryPadding = 20;
-    const inventoryWidth = slotSize + (slotPadding * 2);
-    const inventoryTotalWidth = inventoryWidth + inventoryPadding;
+    const inventoryPadding = 12;
+    const inventoryPanelWidth = slotSize + (inventoryPadding * 2); // 74px
+    const spaceFromInventoryToEdge = 15; // Space from inventory to right edge
 
-    // Text box dimensions and positioning
+    // Calculate text box dimensions using the specified formula
     const padding = 20;
     const textBoxHeight = 140;
     const textBoxY = canvas.height - textBoxHeight - padding;
-    const textBoxX = padding;
-    const textBoxWidth = canvas.width - (padding * 2) - inventoryTotalWidth;
+
+    // Calculate available space for UI components (excluding inventory panel)
+    const availableWidth = canvas.width - inventoryPanelWidth - spaceFromInventoryToEdge;
+
+    // Calculate text box width and center it horizontally
+    const textBoxWidth = availableWidth - (padding * 2); // Leave padding on sides
+    const textBoxX = (availableWidth - textBoxWidth) / 2; // Center horizontally in available space
 
     // Create bubble effect with rounded rectangle
     this.drawBubble(ctx, textBoxX, textBoxY, textBoxWidth, textBoxHeight, 15);

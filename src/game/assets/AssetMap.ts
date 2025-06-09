@@ -540,6 +540,18 @@ export const ASSET_MAP: Record<string, AssetMapping> = {
       spawning: { chance: 0.0001, biomes: ['GRASS'] }
     }
   },
+  market_stall: {
+    name: 'Market Stall',
+    spritePath: '/sprites/Buildings/Wood/Market.png',
+    index: 1,
+    category: 'structure',
+    properties: {
+      interactable: true,
+      passable: false,
+      tileTypeRequired: ['GRASS'],
+      spawning: { chance: 0.0001, biomes: ['GRASS'] }
+    }
+  },
   dungeon_entrance: {
     name: 'Dungeon Entrance',
     spritePath: '/sprites/Buildings/Wood/Resources.png',
@@ -624,30 +636,161 @@ export const ASSET_MAP: Record<string, AssetMapping> = {
     }
   },
 
-  // NPCs
-  monster: {
-    name: 'Monster',
-    spritePath: '/sprites/Characters/champions/Okomo.png',
+  // Monster NPCs
+  archer_goblin: {
+    name: 'Archer Goblin',
+    spritePath: '/sprites/Characters/Monsters/Orcs/ArcherGoblin.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 60,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0001, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 1 }]
+    }
+  },
+  club_goblin: {
+    name: 'Club Goblin',
+    spritePath: '/sprites/Characters/Monsters/Orcs/ClubGoblin.png',
     index: 0,
     category: 'animal',
     properties: {
       health: 80,
       animated: true,
-      animationFrames: [0, 1, 2, 3], // down movement
+      animationFrames: [0, 1, 2, 3, 4], // down movement
       spawning: { chance: 0.0001, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
       dropItems: [{ type: 'monster_drop', quantity: 1 }]
     }
   },
+  farmer_goblin: {
+    name: 'Farmer Goblin',
+    spritePath: '/sprites/Characters/Monsters/Orcs/FarmerGoblin.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 70,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0001, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 1 }]
+    }
+  },
+  orc: {
+    name: 'Orc',
+    spritePath: '/sprites/Characters/Monsters/Orcs/Orc.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 120,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.00005, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 2 }]
+    }
+  },
+  orc_shaman: {
+    name: 'Orc Shaman',
+    spritePath: '/sprites/Characters/Monsters/Orcs/OrcShaman.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 100,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.00005, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 2 }]
+    }
+  },
+  spear_goblin: {
+    name: 'Spear Goblin',
+    spritePath: '/sprites/Characters/Monsters/Orcs/SpearGoblin.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 90,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0001, biomes: ['FOREST', 'STONE', 'GRAVEL'] },
+      dropItems: [{ type: 'monster_drop', quantity: 1 }]
+    }
+  },
+  mega_slime_blue: {
+    name: 'Mega Slime',
+    spritePath: '/sprites/Characters/Monsters/Slimes/MegaSlimeBlue.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 150,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4, 5], // down movement
+      spawning: { chance: 0.00002, biomes: ['MUD'] },
+      dropItems: [{ type: 'monster_drop', quantity: 3 }]
+    }
+  },
+  slime: {
+    name: 'Slime',
+    spritePath: '/sprites/Characters/Monsters/Slimes/Slime.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 40,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4, 5], // down movement
+      spawning: { chance: 0.0002, biomes: ['MUD'] },
+      dropItems: [{ type: 'monster_drop', quantity: 1 }]
+    }
+  },
 
-  trader: {
-    name: 'Trader',
-    spritePath: '/sprites/Characters/champions/Okomo.png',
-    index: 4,
+  // Trader NPCs
+  axeman_trader: {
+    name: 'Axeman Trader',
+    spritePath: '/sprites/Characters/Soldiers/Melee/AxemanTemplate.png',
+    index: 0,
     category: 'animal',
     properties: {
       health: 50,
       animated: true,
-      animationFrames: [4, 5, 6, 7], // down movement with different sprite
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0005, biomes: ['GRASS'] },
+      dropItems: [{ type: 'gold_ingot', quantity: 1 }]
+    }
+  },
+  swordsman_trader: {
+    name: 'Swordsman Trader',
+    spritePath: '/sprites/Characters/Soldiers/Melee/SwordsmanTemplate.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 50,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0005, biomes: ['GRASS'] },
+      dropItems: [{ type: 'gold_ingot', quantity: 1 }]
+    }
+  },
+  spearman_trader: {
+    name: 'Spearman Trader',
+    spritePath: '/sprites/Characters/Soldiers/Melee/SpearmanTemplate.png',
+    index: 0,
+    category: 'animal',
+    properties: {
+      health: 50,
+      animated: true,
+      animationFrames: [0, 1, 2, 3, 4], // down movement
+      spawning: { chance: 0.0005, biomes: ['GRASS'] },
+      dropItems: [{ type: 'gold_ingot', quantity: 1 }]
+    }
+  },
+  farmer_trader: {
+    name: 'Farmer Trader',
+    spritePath: '/sprites/Characters/Workers/FarmerTemplate.png',
+    index: 20,
+    category: 'animal',
+    properties: {
+      health: 50,
+      animated: true,
+      animationFrames: [20, 21, 22, 23, 24], // down movement (offset indices)
       spawning: { chance: 0.0005, biomes: ['GRASS'] },
       dropItems: [{ type: 'gold_ingot', quantity: 1 }]
     }

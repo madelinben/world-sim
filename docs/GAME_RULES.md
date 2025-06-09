@@ -122,11 +122,10 @@ Generated based on temperature and humidity:
 
 ### **Movement Rules**
 - **Impassable Tiles**: Cannot move to DEEP_WATER, SHALLOW_WATER, STONE, COBBLESTONE, or SNOW
-- **Living Structure Blocking**: Cannot move to tiles with alive trees/cactus (health > 0)
+- **Living Structure Blocking**: Cannot move to tiles with alive trees (health > 0)
+- **Cactus Passability**: Cactus tiles are passable but deal 5 damage per frame to entities standing on them
 - **Destroyed Structure Passage**: Can move through destroyed structures (health ≤ 0)
 - **Mud Restriction**: Only 1/3 chance to move when standing on MUD
-- **Snow Restriction**: Only 1/4 chance to move when standing on SNOW
-- **Shallow Water Restriction**: Only 1/3 chance to move when standing on SHALLOW_WATER
 - **Village Structure Blocking**: Cannot move to tiles with non-passable POIs or living NPCs
 
 ### **Direction Tracking**
@@ -208,6 +207,8 @@ Generated based on temperature and humidity:
 | `gold_ingot` | 64 | Chests, Processed | Refined material |
 | **Monster Drops** | | | |
 | `monster_drop` | 64 | Defeated monsters | Monster essence |
+| `copper_ore` | 64 | Monster drops, Stone mining | Raw material |
+| `gold_ingot` | 64 | Trader drops, Chests | Refined material |
 
 ### **Inventory UI**
 - **Visual Display**: 9 inventory slots rendered on right side of screen
@@ -224,6 +225,9 @@ Generated based on temperature and humidity:
 - **Damage System**: Structures take damage when attacked
 - **Drop System**: Structures drop items when destroyed
 - **Visual Feedback**: Health displayed in facing tile logs
+- **Health Bars**: Structures show health bars when damaged (14px wide, 2px high, 4px above sprite)
+  - Red background bar shows total health capacity
+  - Green foreground bar shows current health percentage
 
 ### **Structure Types**
 
@@ -290,6 +294,13 @@ Generated based on temperature and humidity:
 - **Tile Conversion**: Tile converts to SAND (permanent)
 - **Animation System**: Cactus removed from rendering system
 
+### **Cactus Damage System**
+- **Environmental Hazard**: Living cactus deal damage to entities standing on their tiles
+- **Damage Amount**: 5 damage per frame to any entity (player, NPCs) on living cactus tiles
+- **Area of Effect**: 20-tile radius checking around player for efficient damage application
+- **Entity Filtering**: Only affects entities with health > 0 (living entities)
+- **Console Logging**: Damage events logged for debugging and feedback
+
 ## ⚔️ **Combat System**
 
 ### **Player Combat Stats**
@@ -312,19 +323,90 @@ Generated based on temperature and humidity:
 | **Chicken** | 20 HP | 1x Chicken Meat | Flees, becomes 'fleeing' state |
 | **Pig** | 35 HP | 3x Pork | Flees, becomes 'fleeing' state |
 | **Sheep** | 25 HP | 1x Mutton + 3x Wool | Flees, becomes 'fleeing' state |
-| **Trader** | 50 HP | No drops | Flees, becomes 'fleeing' state |
+| **Trader NPCs** | 50 HP | 1x Gold Ingot | Flees, becomes 'fleeing' state |
 | **Orc/Skeleton/Goblin** | 40 HP | 1x Copper Ore | Aggressive, continues attacking |
+| **Archer Goblin** | 60 HP | 1x Monster Drop | Aggressive, continues attacking |
+| **Club Goblin** | 80 HP | 1x Monster Drop | Aggressive, continues attacking |
+| **Farmer Goblin** | 70 HP | 1x Monster Drop | Aggressive, continues attacking |
+| **Orc Shaman** | 100 HP | 2x Monster Drop | Aggressive, continues attacking |
+| **Spear Goblin** | 90 HP | 1x Monster Drop | Wide attack (2 tiles), aggressive |
+| **Mega Slime Blue** | 150 HP | 3x Monster Drop | Aggressive, continues attacking |
+| **Slime** | 40 HP | 1x Monster Drop | Aggressive, continues attacking |
+
+### **Attack Animation System**
+All NPCs feature comprehensive attack animation systems:
+- **Directional Attacks**: 4-direction attack sprites (up, down, left, right)
+- **Attack Duration**: 600ms attack animation cycles
+- **Attack Cooldown**: 1 second between attacks for NPCs
+- **Facing Direction**: NPCs automatically face their attack target
+- **Wide Attack System**: SpearGoblin features special 2-tile wide attacks
+  - Renders attack animation on both player tile and facing tile
+  - Uses dedicated wide attack sprite frames
+
+### **Monster Flocking Algorithm**
+Monsters implement sophisticated flocking behavior:
+- **Target Acquisition**: Actively seek out friendly NPCs and players within detection range
+- **Flocking Movement**: Move towards nearest friendly targets when not adjacent
+- **Combat Engagement**: Attack when adjacent to targets, dealing 5 damage
+- **Priority Targeting**: Player has higher priority (2) than NPCs (1)
+- **Attack Cooldown**: 1 second between monster attacks
 
 ### **Combat Feedback**
 - **Health Display**: NPCs show health bars when damaged
+- **Structure Health Bars**: Trees and cactus display health bars when damaged (red background, green foreground, 4px above sprite)
 - **Death Removal**: Dead NPCs are automatically removed from tiles
 - **Drop Collection**: Items automatically added to player inventory
 - **Console Logging**: Real-time combat updates and health tracking
+- **Attack Animation**: Visual feedback during combat with proper sprite frames
 
 ### **Combat Controls**
 - **Attack**: `Q` key attacks target in facing direction
+- **Interact with Combat Animation**: `F` key triggers interaction with attack animation for visual feedback
 - **Target Display**: Console shows target tile and health status
 - **Damage Feedback**: Real-time health updates displayed
+- **Animation Integration**: Both attack and interact actions trigger player attack animation
+
+## 🏆 **Player Score System**
+
+### **Village-Based Reputation**
+The game features a comprehensive reputation system that tracks player actions within each village:
+- **Score Range**: -50 to +100 points per village
+- **Village Detection**: 50x50 tile grid areas, automatic village discovery
+- **Persistent Tracking**: Scores stored per village with unique IDs
+- **Area-Based**: Actions only affect score when within village boundaries
+
+### **Score Modifiers**
+| Action | Score Change | Description |
+|--------|-------------|-------------|
+| **Task Completion** | +5 points | Complete village quests or objectives |
+| **Monster Defeated** | +1 point | Kill monsters within village area |
+| **Animal Attacked** | -3 points | Attack village animals (chicken, pig, sheep) |
+| **Trader Attacked** | -5 points | Attack village traders |
+| **Village Defended** | +2 points | Defend village from threats |
+
+### **RPG Dialogue System**
+Trader interactions display score-based messages from popular RPG games:
+- **35+ Authentic Quotes**: Sourced from Skyrim, Oblivion, Fallout, Zelda, Mario
+- **Score Range System**: Uses minScore/maxScore ranges instead of exact thresholds
+- **Random Comment Selection**: Randomly selects from multiple comments within appropriate score range
+- **Dynamic Responses**: Comments change based on player reputation
+- **Village Context**: Dialogue includes village name and context
+
+#### **Dialogue Score Ranges**
+| Score Range | Category | Sample Dialogue | Source Game |
+|-------------|----------|-----------------|-------------|
+| **-50 to -21** | Hostile | "We don't like your kind around here!" | Skyrim |
+| **-20 to -1** | Cold | "I got nothing to say to you." | Fallout |
+| **0 to 19** | Neutral | "What do you want?" | Skyrim |
+| **20 to 49** | Friendly | "It's a pleasure to meet you!" | Skyrim |
+| **50 to 79** | Respected | "The whole village speaks well of you." | Skyrim |
+| **80 to 100** | Hero | "You are the stuff of legend, my friend!" | Zelda |
+
+### **Interaction System**
+- **Trader Dialogue**: Press `F` near traders to trigger score-based dialogue
+- **Village Discovery**: Walking near village wells automatically initializes score tracking
+- **Score Display**: Console logging shows score changes and current reputation
+- **Cross-Village**: Each village maintains independent reputation scores
 
 ## 🎮 **User Interface System**
 
@@ -351,6 +433,8 @@ The game features a modern bubble-style UI with white backgrounds and rounded bo
   - Selected slot highlighting with blue border and background tint
 - **Interaction**: Click slots or use number keys 1-9 for selection
 - **Drop Shadow**: Subtle shadow effects for depth perception
+- **Toggle Feature**: Press `E` key to open/close detailed inventory UI overlay
+- **Responsive Design**: UI adapts to screen width, centered horizontally with proper spacing
 
 ### **Notice Board System**
 A comprehensive village information system that provides lore and character to settlements:
@@ -396,6 +480,8 @@ A comprehensive village information system that provides lore and character to s
 - **Key Handling**: Comprehensive input system for UI interaction
 - **Canvas Rendering**: High-performance rendering with proper layering
 - **Responsive Design**: UI adapts to different screen sizes and resolutions
+- **Layout Coordination**: Text box and inventory UI share consistent width calculations
+- **Bubble Effects**: Consistent rounded corners, shadows, and modern styling throughout
 
 ## 🏘️ **Village Generation System**
 
@@ -410,9 +496,24 @@ A comprehensive village information system that provides lore and character to s
 | **Armory Market** | 6-10 tiles from well | 1 per village | Weapons & tools |
 | **Cloth Market** | 6-10 tiles from well | 1 per village | Textiles & materials |
 
+### **Village Trader Generation**
+Each village automatically generates 5 friendly trader NPCs:
+- **Spawn Location**: 6-10 tiles from village center (water well)
+- **Trader Types**: Axeman Trader, Swordsman Trader, Spearman Trader, Farmer Trader
+- **Behavior**: Flocking algorithm similar to animals with specific attractions
+  - **Village Structure Attraction**: Attracted to village buildings (wells, markets, windmills)
+  - **Monster Avoidance**: Flee from hostile monsters within detection range
+  - **Player Neutrality**: NOT attracted to player (unlike animals with wheat)
+  - **Spacing**: Maintain 2+ tile minimum distance from other NPCs
+- **Health**: 50 HP each
+- **Drops**: 1x Gold Ingot when defeated
+- **Interaction**: `F` key triggers RPG dialogue system
+- **Movement**: 1.2 second cooldown, avoid player collision
+
 ### **Village Naming & Identity System**
 - **Grid-Based Assignment**: Villages assigned to 50x50 tile grid areas
-- **Deterministic Generation**: Same seed produces same village names and locations
+- **Random Name Generation**: Villages get completely random names using `Math.random()` for prefix/suffix selection
+- **Name Caching**: Generated names cached per village grid to ensure consistency across sessions
 - **Name Storage**: Village names stored in POI customData for persistence
 - **Cross-Reference System**: Notice boards can find nearby wells to get village names
 - **Fallback Naming**: "Unknown Village" for edge cases or corrupted data
@@ -529,14 +630,47 @@ A comprehensive village information system that provides lore and character to s
 - **Functionality**: Teleport player underground when interacted with
 - **Spacing**: Minimum 15 tiles between underground structures
 
+#### **Dungeon Monster Generation**
+Each dungeon entrance automatically generates 5 hostile monsters:
+- **Spawn Location**: 3-8 tiles from dungeon entrance
+- **Monster Types**: Archer Goblin, Club Goblin, Farmer Goblin, Orc Shaman, Spear Goblin, Mega Slime Blue, Slime
+- **Behavior**: Aggressive flocking towards friendly NPCs and players
+- **Combat**: 5 damage attacks with 1 second cooldown
+- **Health**: Varies by type (40-150 HP)
+- **Drops**: Monster Drops (1-3 quantity based on type)
+
 ## 🐾 **NPC & Animal System**
 
-### **Animal Types & Behavior**
+### **NPC Types & Behavior**
+
+#### **Animals**
 | Animal | Health | Aggression | Drops | Behavior |
 |--------|--------|------------|-------|----------|
 | `chicken` | 20 HP | Peaceful | 1 chicken_meat | Follows wheat, flees when attacked, 4-frame walking animation |
-| `pig` | 35 HP | Peaceful | 2 pork | Follows wheat, slow movement, 4-frame walking animation |
-| `sheep` | 25 HP | Peaceful | 1 wool, 1 mutton | Follows wheat, grazes peacefully, 4-frame walking animation |
+| `pig` | 35 HP | Peaceful | 3 pork | Follows wheat, slow movement, 4-frame walking animation |
+| `sheep` | 25 HP | Peaceful | 1 mutton, 3 wool | Follows wheat, grazes peacefully, 4-frame walking animation |
+
+#### **Friendly Traders**
+| Trader | Health | Aggression | Drops | Behavior |
+|--------|--------|------------|-------|----------|
+| `axeman_trader` | 50 HP | Peaceful | 1 gold_ingot | Flocking: attracted to village buildings, flees monsters, dialogue system |
+| `swordsman_trader` | 50 HP | Peaceful | 1 gold_ingot | Flocking: attracted to village buildings, flees monsters, dialogue system |
+| `spearman_trader` | 50 HP | Peaceful | 1 gold_ingot | Flocking: attracted to village buildings, flees monsters, dialogue system |
+| `farmer_trader` | 50 HP | Peaceful | 1 gold_ingot | Flocking: attracted to village buildings, flees monsters, dialogue system |
+
+#### **Hostile Monsters**
+| Monster | Health | Aggression | Drops | Behavior |
+|---------|--------|------------|-------|----------|
+| `orc` | 120 HP | Aggressive | 1 copper_ore | Flocking behavior, attacks friendly NPCs |
+| `skeleton` | 40 HP | Aggressive | 1 copper_ore | Flocking behavior, attacks friendly NPCs |
+| `goblin` | 40 HP | Aggressive | 1 copper_ore | Flocking behavior, attacks friendly NPCs |
+| `archer_goblin` | 60 HP | Aggressive | 1 monster_drop | Advanced flocking, 5-frame attack animation |
+| `club_goblin` | 80 HP | Aggressive | 1 monster_drop | Advanced flocking, 5-frame attack animation |
+| `farmer_goblin` | 70 HP | Aggressive | 1 monster_drop | Advanced flocking, 5-frame attack animation |
+| `orc_shaman` | 100 HP | Aggressive | 2 monster_drop | Advanced flocking, 5-frame attack animation |
+| `spear_goblin` | 90 HP | Aggressive | 1 monster_drop | Wide attack (2 tiles), 5-frame attack animation |
+| `mega_slime_blue` | 150 HP | Aggressive | 3 monster_drop | Advanced flocking, 6-frame attack animation |
+| `slime` | 40 HP | Aggressive | 1 monster_drop | Advanced flocking, 6-frame attack animation |
 
 ### **NPC Movement & AI**
 - **Detection Range**: 5 tiles radius
@@ -558,6 +692,21 @@ A comprehensive village information system that provides lore and character to s
 - **Camera-Based Optimization**: Only NPCs within camera view + 5-tile buffer are updated for performance
 - **Continuous Updates**: NPCs updated every frame for smooth movement and animation
 - **Reduced Logging**: Only logs successful movements and important errors to avoid console spam
+
+#### **Trader-Specific Flocking Behavior**
+Trader NPCs implement specialized flocking AI distinct from animal behavior:
+- **Village Structure Attraction**: Actively move towards nearby village buildings within 5-tile detection range
+  - **Primary Targets**: Water wells, markets, windmills, notice boards
+  - **Attraction Strength**: Similar to animal wheat-following but for structures
+- **Monster Avoidance**: Flee from hostile monsters (orcs, goblins, skeletons, slimes) within detection range
+  - **Avoidance Priority**: Monster avoidance overrides structure attraction
+  - **Flee Distance**: Move away from monsters until outside detection range
+- **Player Neutrality**: Traders do NOT follow or avoid players unless attacked
+  - **No Wheat Response**: Unlike animals, traders ignore players carrying wheat
+  - **Combat Response**: Only flee from player if attacked (enters 'fleeing' state)
+- **Trader Clustering**: Traders avoid crowding around same structures
+  - **Spacing**: Maintain 2+ tile minimum distance from other NPCs
+  - **Structure Distribution**: Multiple traders spread across different village buildings
 
 ### **Tile-Based Movement Rules**
 - **One Entity Per Tile**: Only one structure, POI, or NPC can occupy a single tile at any time
@@ -612,6 +761,7 @@ A comprehensive village information system that provides lore and character to s
 - **Interact**: `F` key - Interact with POIs and structures
   - **Notice Boards**: Displays village information in bubble-style text box
   - **Water Wells**: Restores 25 health points
+  - **Trader NPCs**: Triggers RPG dialogue system with score-based responses
   - **Other POIs**: Various context-specific interactions
 
 ### **Inventory Controls**
@@ -621,8 +771,9 @@ A comprehensive village information system that provides lore and character to s
 
 ### **Mouse Controls**
 - **Camera Drag**: Click and drag to move camera view
-- **Inventory Interaction**: Click inventory slots to select items
+- **Inventory Interaction**: Click inventory slots to select items (currently disabled - keyboard only)
 - **Click Detection**: Distinguishes between clicks and drags (< 5 pixel threshold)
+- **Future Implementation**: Mouse controls for game world interactions planned
 
 ### **Console Logging**
 - **Key Operations**: Shows meaningful key mappings (e.g., "q → attack")
@@ -694,6 +845,13 @@ Currently a **survival/resource gathering game** with:
 
 ## 🔧 **Technical Implementation**
 
+### **Environmental Damage System**
+- **Cactus Damage**: 5 damage per frame to any entity standing on living cactus tiles
+- **Damage Radius**: 20-tile radius checking around player for performance optimization
+- **Entity Filtering**: Only damages living entities (health > 0)
+- **Logging**: Console feedback for all damage events and entity deaths
+- **Real-Time Processing**: Damage applied every frame during game update cycle
+
 ### **Tile-Based Movement System**
 - **Movement Cooldown**: 1.2-second delay between moves (slowed down for realistic animal behavior)
 - **Movement Logic**: NPCs choose one adjacent tile based on current state:
@@ -746,7 +904,13 @@ Currently a **survival/resource gathering game** with:
   },
   world: {
     tiles: Tile[],
-    villageStructures: VillageStructure[]
+    villageStructures: VillageStructure[],
+    npcs: NPC[],
+    pois: POI[]
+  },
+  scoreSystem: {
+    villageScores: Map<string, VillageScore>,
+    rpgComments: RPGComment[]
   }
 }
 ```
@@ -804,4 +968,4 @@ Currently a **survival/resource gathering game** with:
 
 ---
 
-*This document reflects the current game implementation as a survival/resource management experience with procedural world generation, well-centered village systems, animated NPCs, enhanced snow mountain regions, slowed animal movement for realism, forest background sprites, comprehensive sprite-based graphics, advanced animal breeding system, and deterministic village naming. The game features a complete inventory system, combat mechanics, environmental interactions with priority-based structure placement, and modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces.*
+*This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system, sophisticated combat mechanics with attack animations, village-based reputation system with RPG dialogue, monster flocking algorithms, trader generation, dungeon monster spawning, environmental interactions with priority-based structure placement, and modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using advanced AI behaviors.*

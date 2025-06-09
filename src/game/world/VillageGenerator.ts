@@ -133,11 +133,13 @@ export class VillageGenerator {
         const numStructures = Math.floor(Math.random() * 3) + 2; // 2-4 structures
         const structureTypes = ['windmill', 'market_stall'];
 
+        console.log(`🏘️ About to generate ${numStructures} POI structures around well for village: ${villageName}`);
+
         for (let i = 0; i < numStructures; i++) {
           const structureType = structureTypes[Math.floor(Math.random() * structureTypes.length)]!;
           let placed = false;
           let attempts = 0;
-          const maxAttempts = 20;
+          const maxAttempts = 30; // Increased attempts
 
           while (!placed && attempts < maxAttempts) {
             const angle = Math.random() * 2 * Math.PI;
@@ -145,8 +147,15 @@ export class VillageGenerator {
             const structX = Math.round(tileX + Math.cos(angle) * distance);
             const structY = Math.round(tileY + Math.sin(angle) * distance);
 
-            if (tileOccupancyChecker && !tileOccupancyChecker(structX, structY) &&
-                this.hasAdequatePOISpacing(structX, structY, existingStructures)) {
+            const structTileKey = `${structX},${structY}`;
+            const wellTileKey = `${tileX},${tileY}`;
+
+            // Ensure we don't place on the well tile or already occupied tiles
+            if (structTileKey !== wellTileKey &&
+                !existingStructures.has(structTileKey) &&
+                !tileOccupancyChecker?.(structX, structY) &&
+                this.hasAdequatePOISpacing(structX, structY, existingStructures) &&
+                this.getTileTypeForCoords(structX, structY) === 'GRASS') {
 
               const structWorldX = structX * 16;
               const structWorldY = structY * 16;
@@ -163,16 +172,21 @@ export class VillageGenerator {
                 })
               };
               structures.push(structure);
+              existingStructures.set(structTileKey, structure); // Register the structure to prevent conflicts
               placed = true;
+              console.log(`Generated ${structureType} at tile (${structX}, ${structY}) around well at (${tileX}, ${tileY})`);
             }
             attempts++;
           }
+
+          if (!placed) {
+            console.warn(`Failed to place ${structureType} around well at (${tileX}, ${tileY}) after ${maxAttempts} attempts`);
+          }
         }
 
-
-
-        // DON'T generate the complete village here - it will be generated tile-by-tile
-        // This prevents conflicts and ensures proper tile occupancy checking
+        // Generate 5 trader NPCs around the village well
+        console.log(`🏘️ About to call generateVillageTraders for village: ${villageName} at well (${tileX}, ${tileY})`);
+        this.generateVillageTraders(tileX, tileY, villageName, existingStructures, structures, tileOccupancyChecker);
       }
     }
 
@@ -191,6 +205,11 @@ export class VillageGenerator {
         const mineStructure = this.generateMineOrDungeon(tileX, tileY, existingStructures);
         if (mineStructure) {
           structures.push(mineStructure);
+
+          // Generate 5 monsters near dungeon entrances
+          if (mineStructure.type === 'dungeon_entrance') {
+            this.generateDungeonMonsters(tileX, tileY, existingStructures, structures, tileOccupancyChecker);
+          }
         }
       }
     }
@@ -204,8 +223,8 @@ export class VillageGenerator {
     }
 
     // Generate monsters on various terrains (very rare, avoiding villages)
-    if ((tileType === 'FOREST' || tileType === 'STONE' || tileType === 'GRAVEL') && villageValue < this.VILLAGE_THRESHOLD - 0.2) {
-      const monsterStructure = this.generateMonster(tileX, tileY, existingStructures);
+    if ((tileType === 'FOREST' || tileType === 'STONE' || tileType === 'GRAVEL' || tileType === 'MUD') && villageValue < this.VILLAGE_THRESHOLD - 0.2) {
+      const monsterStructure = this.generateMonster(tileX, tileY, existingStructures, tileType);
       if (monsterStructure) {
         structures.push(monsterStructure);
       }
@@ -366,18 +385,41 @@ export class VillageGenerator {
     return missingTypes[selectedIndex] ?? null;
   }
 
-  // Helper method to get tile type for coordinates (simplified)
+  // Helper method to get tile type for coordinates (simplified but more accurate)
   private getTileTypeForCoords(x: number, y: number): string {
     // This is a simplified version - in a real implementation you'd call the world generator
-    // For now, assume most tiles are GRASS unless they're clearly water/stone based on position
+    // For now, use basic noise-based terrain detection similar to WorldGenerator
     const worldX = x * 16;
     const worldY = y * 16;
 
-    // Simple heuristic - you could make this more sophisticated
-    if (Math.abs(worldX % 1000) < 100 || Math.abs(worldY % 1000) < 100) {
-      return 'STONE'; // Some areas are stone
+    // Use simple noise for basic terrain detection
+    const noiseX = worldX / 1000;
+    const noiseY = worldY / 1000;
+    const heightValue = this.villageNoise(noiseX * 2, noiseY * 2); // Reuse village noise for height
+    const tempValue = this.structureNoise(noiseX * 1.5, noiseY * 1.5); // Use structure noise for temperature
+
+    // Basic terrain rules (simplified from WorldGenerator)
+    if (heightValue < 0.3) {
+      return heightValue < 0.2 ? 'DEEP_WATER' : 'SHALLOW_WATER';
     }
-    return 'GRASS'; // Default to grass for village generation
+
+    if (heightValue > 0.8) {
+      return tempValue < 0.3 ? 'SNOW' : 'STONE';
+    }
+
+    if (heightValue > 0.7) {
+      return 'COBBLESTONE';
+    }
+
+    if (tempValue > 0.7 && heightValue < 0.4) {
+      return heightValue < 0.25 ? 'MUD' : 'SAND';
+    }
+
+    if (tempValue > 0.6) {
+      return 'FOREST';
+    }
+
+    return 'GRASS'; // Default to grass for most areas
   }
 
   private generateVillage(
@@ -597,8 +639,8 @@ export class VillageGenerator {
     const noiseY = worldY / 500;
     const animalValue = this.animalNoise(noiseX, noiseY);
 
-    // Increased chance for wild animals
-    if (animalValue < 0.85) {
+    // BACK TO NORMAL: Original threshold for wild animals
+    if (animalValue < 0.85) { // Changed back from 0.3 to 0.85
       return null;
     }
 
@@ -617,7 +659,7 @@ export class VillageGenerator {
 
     if (animal) {
       existingStructures.set(tileKey, animal);
-      // Wild animal generated successfully
+      console.log(`🐾 Generated wild ${animalType} at tile (${tileX}, ${tileY})`);
     }
 
     return animal;
@@ -626,7 +668,8 @@ export class VillageGenerator {
   private generateMonster(
     tileX: number,
     tileY: number,
-    existingStructures: Map<string, VillageStructure>
+    existingStructures: Map<string, VillageStructure>,
+    tileType: string
   ): VillageStructure | null {
     const tileKey = `${tileX},${tileY}`;
 
@@ -641,21 +684,33 @@ export class VillageGenerator {
     const noiseY = worldY / 800;
     const monsterValue = this.animalNoise(noiseX, noiseY); // Reuse animal noise but different scale
 
-    // Very low chance for monsters
-    if (monsterValue < 0.98) { // Even rarer than animals
+    // BACK TO NORMAL: Original threshold for monsters
+    if (monsterValue < 0.98) { // Changed back from 0.7 to 0.98
       return null;
     }
 
-    // Additional randomness - only 20% chance even if noise threshold is met
+    // Add back the additional randomness check
     if (Math.random() > 0.2) {
       return null;
     }
 
+    // Select monster type based on biome
+    let monsterType: string;
+    if (tileType === 'MUD') {
+      // Slimes only spawn in mud biomes
+      monsterType = Math.random() < 0.2 ? 'mega_slime_blue' : 'slime'; // 20% chance for mega slime, 80% for regular slime
+    } else {
+      // Other monsters spawn in FOREST, STONE, GRAVEL
+      const otherMonsters = ['archer_goblin', 'club_goblin', 'farmer_goblin', 'orc', 'orc_shaman', 'spear_goblin'];
+      monsterType = otherMonsters[Math.floor(Math.random() * otherMonsters.length)]!;
+    }
+
     const worldPos = { x: worldX, y: worldY };
-    const monster = this.createMonsterNPC('orc', worldPos);
+    const monster = this.createMonsterNPC(monsterType, worldPos);
 
     if (monster) {
       existingStructures.set(tileKey, monster);
+      console.log(`👹 Generated wild ${monsterType} at tile (${tileX}, ${tileY}) on ${tileType}`);
     }
 
     return monster;
@@ -717,7 +772,7 @@ export class VillageGenerator {
   private createMonsterNPC(type: string, position: Position): VillageStructure | null {
     try {
       const npc = new NPC({
-        type: type as 'orc' | 'skeleton' | 'goblin',
+        type: type as 'orc' | 'skeleton' | 'goblin' | 'archer_goblin' | 'club_goblin' | 'farmer_goblin' | 'orc_shaman' | 'spear_goblin' | 'mega_slime_blue' | 'slime',
         position,
         aggressive: true
       });
@@ -734,22 +789,324 @@ export class VillageGenerator {
   }
 
   private createTraderNPC(type: string, position: Position): VillageStructure | null {
+    console.log(`🏪 Creating trader NPC of type ${type} at position (${position.x}, ${position.y})`);
     try {
       const npc = new NPC({
-        type: type as 'trader',
+        type: type as 'trader' | 'axeman_trader' | 'swordsman_trader' | 'spearman_trader' | 'farmer_trader',
         position,
         aggressive: false
       });
 
+      console.log(`✅ Successfully created ${type} NPC at (${position.x}, ${position.y})`);
       return {
         type,
         position,
         npc
       };
     } catch (error) {
-      console.warn(`Failed to create trader NPC ${type}:`, error);
+      console.error(`❌ Failed to create trader NPC ${type}:`, error);
       return null;
     }
+  }
+
+  private generateVillageTraders(
+    centerTileX: number,
+    centerTileY: number,
+    villageName: string,
+    existingStructures: Map<string, VillageStructure>,
+    structures: VillageStructure[],
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): void {
+    console.log(`🏪 Starting trader generation for village: ${villageName} at center (${centerTileX}, ${centerTileY})`);
+    const traderTypes = ['axeman_trader', 'swordsman_trader', 'spearman_trader', 'farmer_trader'];
+    let tradersPlaced = 0;
+    const maxTraders = 5;
+
+    // Search for suitable tiles around the village well (5-20 tiles away)
+    const maxDistance = 20;
+    const minDistance = 5;
+
+    // Create array of potential positions around the well
+    const potentialPositions: { x: number; y: number; distance: number }[] = [];
+
+    for (let dx = -maxDistance; dx <= maxDistance; dx++) {
+      for (let dy = -maxDistance; dy <= maxDistance; dy++) {
+        const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
+
+        // Only consider tiles within the valid distance range
+        if (distance >= minDistance && distance <= maxDistance) {
+          const tileX = centerTileX + dx;
+          const tileY = centerTileY + dy;
+          potentialPositions.push({ x: tileX, y: tileY, distance });
+        }
+      }
+    }
+
+    // Sort by distance (prefer closer positions to well)
+    potentialPositions.sort((a, b) => a.distance - b.distance);
+
+    let tilesChecked = 0;
+    let occupiedCount = 0;
+    let badTerrainCount = 0;
+    let badSpacingCount = 0;
+    let insufficientSpaceCount = 0;
+
+    // Try to place traders on suitable tiles
+    for (const pos of potentialPositions) {
+      if (tradersPlaced >= maxTraders) break;
+      tilesChecked++;
+
+      const tileKey = `${pos.x},${pos.y}`;
+
+      // CRITICAL: Never place traders on the well center tile
+      if (pos.x === centerTileX && pos.y === centerTileY) {
+        occupiedCount++;
+        console.log(`🚫 Tile (${pos.x}, ${pos.y}) blocked - this is the village well center tile`);
+        continue; // Skip the well tile entirely
+      }
+
+      // Check if tile already has a structure in our existing structures map
+      if (existingStructures.has(tileKey)) {
+        occupiedCount++;
+        continue; // Skip tiles that already have structures
+      }
+
+      // For traders, check for impassable POIs (like wells) and living NPCs specifically
+      // Don't use the overly restrictive tileOccupancyChecker that marks trees/etc as occupied
+      let isActuallyOccupied = false;
+
+      // Check if there's an existing structure at this exact tile that would block trader placement
+      const existingStructure = existingStructures.get(tileKey);
+      if (existingStructure) {
+        // Check if it's an impassable POI (like wells, markets, windmills) or an NPC
+        if (existingStructure.poi && !existingStructure.poi.passable) {
+          isActuallyOccupied = true; // Impassable POI blocks placement (wells, markets, etc.)
+          console.log(`🚫 Tile (${pos.x}, ${pos.y}) blocked by impassable POI: ${existingStructure.type}`);
+        } else if (existingStructure.npc && !existingStructure.npc.isDead()) {
+          isActuallyOccupied = true; // Living NPC blocks placement
+          console.log(`🚫 Tile (${pos.x}, ${pos.y}) blocked by living NPC: ${existingStructure.type}`);
+        }
+      }
+
+      // Also check with tileOccupancyChecker but only for critical blocking entities
+      // This should catch wells and other POIs that might not be in existingStructures yet
+      if (!isActuallyOccupied && tileOccupancyChecker) {
+        const isBlockedByChecker = tileOccupancyChecker(pos.x, pos.y);
+        if (isBlockedByChecker) {
+          // Only treat as occupied if it's truly impassable (like wells)
+          // But be permissive about trees and other passable obstacles for traders
+          isActuallyOccupied = true;
+          console.log(`🚫 Tile (${pos.x}, ${pos.y}) blocked by tile occupancy checker (likely well or important POI)`);
+        }
+      }
+
+      if (isActuallyOccupied) {
+        occupiedCount++;
+        continue; // Skip truly occupied tiles
+      }
+
+      // Use a more permissive terrain check - get actual tile type from world generation
+      // instead of the unreliable getTileTypeForCoords method
+      let tileType: string;
+      try {
+        // Try to get the actual tile type - this should use the world generator's actual method
+        // For now, be very permissive about terrain
+        tileType = this.getTileTypeForCoords(pos.x, pos.y);
+
+        // Be much more permissive - traders can spawn on more terrain types than animals
+        // Focus on allowing GRASS tiles specifically
+        const isValidTerrain = tileType === 'GRASS' || tileType === 'DIRT' || tileType === 'FOREST' ||
+                              tileType === 'MUD' || tileType === 'CLAY' || tileType === 'GRAVEL' ||
+                              tileType === 'SAND' || tileType === 'RIVER' || tileType === 'SHALLOW_WATER';
+
+        if (!isValidTerrain) {
+          badTerrainCount++;
+          continue; // Skip unsuitable terrain
+        }
+      } catch (error) {
+        // If terrain detection fails, assume it's valid (GRASS)
+        console.warn(`Failed to get terrain for tile (${pos.x}, ${pos.y}), assuming GRASS`);
+        tileType = 'GRASS';
+      }
+
+      // Use a more permissive spacing check
+      if (!this.hasAdequateTraderSpacingPermissive(pos.x, pos.y, existingStructures, tileOccupancyChecker)) {
+        badSpacingCount++;
+        continue; // Skip if too close to other NPCs
+      }
+
+      // Use a more permissive adjacent space check
+      if (!this.hasMinimalAdjacentSpace(pos.x, pos.y, existingStructures, tileOccupancyChecker)) {
+        insufficientSpaceCount++;
+        continue; // Skip if insufficient movement space
+      }
+
+      // Select random trader type
+      const traderType = traderTypes[Math.floor(Math.random() * traderTypes.length)]!;
+      const worldPos = { x: pos.x * 16, y: pos.y * 16 };
+
+      console.log(`🏪 Attempting to create ${traderType} at tile (${pos.x}, ${pos.y}) with terrain ${tileType}`);
+      const trader = this.createTraderNPC(traderType, worldPos);
+
+      if (trader) {
+        structures.push(trader);
+        existingStructures.set(tileKey, trader);
+        tradersPlaced++;
+        console.log(`✅ Generated ${traderType} at tile (${pos.x}, ${pos.y}) for village: ${villageName} on ${tileType} (distance: ${pos.distance})`);
+      } else {
+        console.warn(`❌ Failed to create trader NPC ${traderType} at (${pos.x}, ${pos.y})`);
+      }
+    }
+
+    console.log(`🏪 Finished trader generation for ${villageName}: ${tradersPlaced}/5 traders placed`);
+    console.log(`📊 Trader generation stats: ${tilesChecked} tiles checked, ${occupiedCount} occupied, ${badTerrainCount} bad terrain, ${badSpacingCount} bad spacing, ${insufficientSpaceCount} insufficient space`);
+  }
+
+  // More permissive spacing check for traders
+  private hasAdequateTraderSpacingPermissive(
+    tileX: number,
+    tileY: number,
+    existingStructures: Map<string, VillageStructure>,
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): boolean {
+    const tileKey = `${tileX},${tileY}`;
+
+    // Don't place if tile already has structure
+    if (existingStructures.has(tileKey)) {
+      return false;
+    }
+
+    // Only check immediately adjacent tiles (not diagonal, more permissive than before)
+    const adjacentTiles = [
+      { x: tileX + 1, y: tileY },     // right
+      { x: tileX - 1, y: tileY },     // left
+      { x: tileX, y: tileY + 1 },     // down
+      { x: tileX, y: tileY - 1 }      // up
+    ];
+
+    // Check if any immediately adjacent tile has an NPC (to avoid direct overlapping)
+    for (const adjacentTile of adjacentTiles) {
+      const adjacentKey = `${adjacentTile.x},${adjacentTile.y}`;
+      const existingStructure = existingStructures.get(adjacentKey);
+      if (existingStructure?.npc) {
+        return false; // Too close to another NPC
+      }
+    }
+
+    return true; // More permissive - just avoid immediate adjacent NPCs
+  }
+
+  // Minimal adjacent space check for traders
+  private hasMinimalAdjacentSpace(
+    tileX: number,
+    tileY: number,
+    existingStructures: Map<string, VillageStructure>,
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): boolean {
+    const tileKey = `${tileX},${tileY}`;
+
+    // Don't place if tile already has structure
+    if (existingStructures.has(tileKey)) {
+      return false;
+    }
+
+    // For traders, we're very permissive about adjacent space
+    // Don't use the restrictive tileOccupancyChecker - just ensure no immediate NPC conflicts
+    const adjacentTiles = [
+      { x: tileX + 1, y: tileY },     // right
+      { x: tileX - 1, y: tileY },     // left
+      { x: tileX, y: tileY + 1 },     // down
+      { x: tileX, y: tileY - 1 }      // up
+    ];
+
+    // Just check that not ALL adjacent tiles have NPCs
+    let npcAdjacentCount = 0;
+    for (const adjacentTile of adjacentTiles) {
+      const adjacentKey = `${adjacentTile.x},${adjacentTile.y}`;
+      const existingStructure = existingStructures.get(adjacentKey);
+      if (existingStructure?.npc) {
+        npcAdjacentCount++;
+      }
+    }
+
+    // Allow placement even if surrounded by structures, just not if completely surrounded by NPCs
+    return npcAdjacentCount < 4; // Allow placement unless completely surrounded by NPCs
+  }
+
+  private generateDungeonMonsters(
+    dungeonTileX: number,
+    dungeonTileY: number,
+    existingStructures: Map<string, VillageStructure>,
+    structures: VillageStructure[],
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): void {
+    const monsterTypes = ['archer_goblin', 'club_goblin', 'farmer_goblin', 'orc', 'orc_shaman', 'spear_goblin', 'mega_slime_blue', 'slime'];
+    let monstersPlaced = 0;
+    const maxMonsters = 5;
+
+    // Try to place 5 monsters around the dungeon entrance (3-8 tiles away)
+    for (let attempts = 0; attempts < 50 && monstersPlaced < maxMonsters; attempts++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const distance = 3 + Math.random() * 5; // 3-8 tiles from dungeon
+      const monsterX = Math.round(dungeonTileX + Math.cos(angle) * distance);
+      const monsterY = Math.round(dungeonTileY + Math.sin(angle) * distance);
+
+      const tileKey = `${monsterX},${monsterY}`;
+      if (!existingStructures.has(tileKey) &&
+          !(tileOccupancyChecker?.(monsterX, monsterY)) &&
+          this.hasAdequateNPCSpacing(monsterX, monsterY, existingStructures, tileOccupancyChecker)) {
+
+        // Select random monster type
+        const monsterType = monsterTypes[Math.floor(Math.random() * monsterTypes.length)]!;
+        const worldPos = { x: monsterX * 16, y: monsterY * 16 };
+        const monster = this.createMonsterNPC(monsterType, worldPos);
+
+        if (monster) {
+          structures.push(monster);
+          existingStructures.set(tileKey, monster);
+          monstersPlaced++;
+          console.log(`Generated ${monsterType} at tile (${monsterX}, ${monsterY}) near dungeon (${dungeonTileX}, ${dungeonTileY})`);
+        }
+      }
+    }
+
+    console.log(`✅ Generated ${monstersPlaced}/5 monsters near dungeon at (${dungeonTileX}, ${dungeonTileY})`);
+  }
+
+  private hasAdequateNPCSpacing(
+    tileX: number,
+    tileY: number,
+    existingStructures: Map<string, VillageStructure>,
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): boolean {
+    const minSpacingRadius = 2; // Require 2-tile minimum spacing between NPCs
+
+    // Check all tiles within the spacing radius
+    for (let dx = -minSpacingRadius; dx <= minSpacingRadius; dx++) {
+      for (let dy = -minSpacingRadius; dy <= minSpacingRadius; dy++) {
+        if (dx === 0 && dy === 0) continue; // Skip the center tile
+
+        const checkX = tileX + dx;
+        const checkY = tileY + dy;
+        const checkKey = `${checkX},${checkY}`;
+
+        // Check if there's already an NPC at this location
+        const existingStructure = existingStructures.get(checkKey);
+        if (existingStructure?.npc) {
+          return false; // Too close to another NPC
+        }
+
+        // Also check via occupancy checker for NPCs
+        if (tileOccupancyChecker?.(checkX, checkY)) {
+          const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
+          if (distance <= 1) { // Immediately adjacent tiles must be free
+            return false;
+          }
+        }
+      }
+    }
+
+    return true;
   }
 
   public getVillageCenter(worldX: number, worldY: number): Position | null {
@@ -807,11 +1164,11 @@ export class VillageGenerator {
           if (distance >= minDistance && distance <= maxDistance && this.isValidNPCTerrain(tileType)) {
             // Check if this position has enough adjacent passable space
             if (this.hasAdjacentPassableSpace(tileX, tileY, existingStructures)) {
-              // Use deterministic random to decide if animal should spawn here (30% chance)
+              // Use deterministic random to decide if animal should spawn here (15% chance)
               const seed = tileX * 31 + tileY * 37 + wellX * 13 + wellY * 17;
               const random = Math.abs(Math.sin(seed)) % 1;
 
-              if (random < 0.3) { // 30% chance to spawn animal
+              if (random < 0.15) { // 15% chance to spawn animal (reduced from 30%)
                 // Use species grouping logic for animal selection
                 const animalType = this.selectAnimalTypeWithGrouping(tileX, tileY, existingStructures);
 
@@ -821,13 +1178,19 @@ export class VillageGenerator {
                   if (animal) {
                     structures.push(animal);
                     existingStructures.set(`${tileX},${tileY}`, animal);
-                    console.log(`Generated village ${animalType} at tile (${tileX}, ${tileY}) for village centered at well (${wellX}, ${wellY}) with species grouping`);
+                    console.log(`🏘️ Generated village ${animalType} at tile (${tileX}, ${tileY}) for village centered at well (${wellX}, ${wellY}) with species grouping`);
                     return; // Only place one animal per tile
+                  } else {
+                    console.warn(`❌ Failed to create village animal ${animalType} at tile (${tileX}, ${tileY})`);
                   }
+                } else {
+                  console.log(`❌ No animal type selected for village animal at tile (${tileX}, ${tileY})`);
                 }
+              } else {
+                console.log(`🎲 Village animal spawn chance failed at tile (${tileX}, ${tileY}) - random: ${random.toFixed(3)}`);
               }
             } else {
-              // Skip animal - insufficient movement space
+              console.log(`❌ Village animal has insufficient adjacent passable space at tile (${tileX}, ${tileY})`);
             }
           }
         }
@@ -900,15 +1263,23 @@ export class VillageGenerator {
     return true;
   }
 
-  // Keep the old method for backward compatibility but make it more strict
+  // Keep the old method for backward compatibility but make it less strict than before
   private hasAdjacentPassableSpace(
     tileX: number,
     tileY: number,
     existingStructures: Map<string, VillageStructure>,
     tileOccupancyChecker?: (x: number, y: number) => boolean
   ): boolean {
-    // Use the new enhanced method
-    return this.hasAdequateAnimalSpacing(tileX, tileY, existingStructures, tileOccupancyChecker);
+    const tileKey = `${tileX},${tileY}`;
+
+    // Don't place if tile already has structure
+    if (existingStructures.has(tileKey)) {
+      return false;
+    }
+
+    // Simple check: just ensure the tile isn't obviously blocked
+    // Don't use the overly restrictive occupancy checker
+    return true;
   }
 
     // Enhanced method to select animal type based on nearby animals (species grouping)
@@ -1004,10 +1375,9 @@ export class VillageGenerator {
       return this.villageNamesCache.get(villageKey)!;
     }
 
-    // Generate deterministic name based on grid coordinates
-    const seed = villageGridX * 31 + villageGridY * 37;
-    const prefixIndex = Math.floor(Math.abs(Math.sin(seed)) * this.VILLAGE_NAME_PREFIXES.length);
-    const suffixIndex = Math.floor(Math.abs(Math.sin(seed + 1)) * this.VILLAGE_NAME_SUFFIXES.length);
+    // Generate completely random name using random selection from prefixes and suffixes
+    const prefixIndex = Math.floor(Math.random() * this.VILLAGE_NAME_PREFIXES.length);
+    const suffixIndex = Math.floor(Math.random() * this.VILLAGE_NAME_SUFFIXES.length);
 
     const prefix = this.VILLAGE_NAME_PREFIXES[prefixIndex] ?? 'Sunny';
     const suffix = this.VILLAGE_NAME_SUFFIXES[suffixIndex] ?? 'ville';
@@ -1045,5 +1415,104 @@ export class VillageGenerator {
     const selectedInfo = villageInfo[infoIndex] ?? villageInfo[0]!;
 
     return `${selectedWelcome}\n\n${selectedInfo}\n\nPress any key to continue...`;
+  }
+
+  private hasAdequateTraderSpacing(
+    tileX: number,
+    tileY: number,
+    existingStructures: Map<string, VillageStructure>,
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): boolean {
+    const tileKey = `${tileX},${tileY}`;
+
+    // Don't place if tile already has structure
+    if (existingStructures.has(tileKey)) {
+      return false;
+    }
+
+    // Check for 2-tile minimum spacing from other NPCs (similar to animals)
+    const minSpacingRadius = 2;
+
+    for (let dx = -minSpacingRadius; dx <= minSpacingRadius; dx++) {
+      for (let dy = -minSpacingRadius; dy <= minSpacingRadius; dy++) {
+        if (dx === 0 && dy === 0) continue; // Skip the center tile
+
+        const checkX = tileX + dx;
+        const checkY = tileY + dy;
+        const checkKey = `${checkX},${checkY}`;
+
+        // Check if there's already an NPC at this location
+        const existingStructure = existingStructures.get(checkKey);
+        if (existingStructure?.npc) {
+          return false; // Too close to another NPC
+        }
+
+        // Also check via occupancy checker for NPCs in adjacent tiles
+        if (tileOccupancyChecker?.(checkX, checkY)) {
+          const distance = Math.abs(dx) + Math.abs(dy); // Manhattan distance
+          if (distance <= 1) { // Immediately adjacent tiles must be free
+            return false;
+          }
+        }
+      }
+    }
+
+    // Ensure at least 3 adjacent tiles are passable for movement (like animals)
+    const adjacentTiles = [
+      { x: tileX + 1, y: tileY },     // right
+      { x: tileX - 1, y: tileY },     // left
+      { x: tileX, y: tileY + 1 },     // down
+      { x: tileX, y: tileY - 1 }      // up
+    ];
+
+    let passableCount = 0;
+    for (const adjacentTile of adjacentTiles) {
+      const adjacentKey = `${adjacentTile.x},${adjacentTile.y}`;
+
+      // Check if adjacent tile is not occupied
+      if (!existingStructures.has(adjacentKey) && !(tileOccupancyChecker?.(adjacentTile.x, adjacentTile.y))) {
+        // Check if it's valid terrain for movement
+        const tileType = this.getTileTypeForCoords(adjacentTile.x, adjacentTile.y);
+        if (this.isValidTraderTerrain(tileType)) {
+          passableCount++;
+        }
+      }
+    }
+
+    // Need at least 3 adjacent passable tiles for good movement
+    return passableCount >= 3;
+  }
+
+  // Helper method to find unoccupied tiles in a radius with proper occupancy checking
+  private findUnoccupiedTilesInRadius(
+    centerX: number,
+    centerY: number,
+    radius: number,
+    existingStructures: Map<string, VillageStructure>,
+    tileOccupancyChecker?: (x: number, y: number) => boolean
+  ): { x: number; y: number }[] {
+    const tiles: { x: number; y: number }[] = [];
+
+    // Check tiles in a circle pattern at this radius
+    for (let angle = 0; angle < 360; angle += 15) { // Every 15 degrees
+      const radians = (angle * Math.PI) / 180;
+      const x = Math.round(centerX + radius * Math.cos(radians));
+      const y = Math.round(centerY + radius * Math.sin(radians));
+      const tileKey = `${x},${y}`;
+
+      // Check if tile is unoccupied using both structure map and occupancy checker
+      if (!existingStructures.has(tileKey) && !(tileOccupancyChecker?.(x, y))) {
+        tiles.push({ x, y });
+      }
+    }
+
+    return tiles;
+  }
+
+  // Special terrain validation for traders (less strict than normal NPCs)
+  private isValidTraderTerrain(tileType: string): boolean {
+    // Traders can be placed on more terrain types than animals
+    // They can handle SHALLOW_WATER (representing beaches/docks) and MUD
+    return tileType !== 'DEEP_WATER' && tileType !== 'STONE' && tileType !== 'COBBLESTONE' && tileType !== 'SNOW';
   }
 }

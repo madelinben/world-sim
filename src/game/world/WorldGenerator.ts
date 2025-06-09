@@ -183,9 +183,30 @@ export class WorldGenerator {
         );
 
         if (structures.length > 0) {
-          tile.villageStructures = structures;
+          // Add each structure to the correct tile based on its actual position
+          for (const structure of structures) {
+            const structureTileX = Math.floor(structure.position.x / WorldGenerator.TILE_SIZE);
+            const structureTileY = Math.floor(structure.position.y / WorldGenerator.TILE_SIZE);
+
+            // Calculate local coordinates within this chunk
+            const localX = structureTileX - (chunkX * chunkSize);
+            const localY = structureTileY - (chunkY * chunkSize);
+
+            // Only add structures that belong to this chunk
+            if (localX >= 0 && localX < chunkSize && localY >= 0 && localY < chunkSize) {
+              const targetTile = tiles[localY]![localX]!;
+              targetTile.villageStructures = targetTile.villageStructures ?? [];
+              targetTile.villageStructures.push(structure);
+
+              console.log(`Added ${structure.type} to correct tile (${structureTileX}, ${structureTileY}) at local (${localX}, ${localY})`);
+            } else {
+              // Structure belongs to a different chunk - this is expected for structures near chunk boundaries
+              console.log(`Structure ${structure.type} at (${structureTileX}, ${structureTileY}) belongs to different chunk`);
+            }
+          }
+
           allChunkStructures.push(...structures);
-          console.log(`Added ${structures.length} structures to tile (${worldX}, ${worldY})`);
+          console.log(`Generated ${structures.length} structures from tile (${worldX}, ${worldY})`);
         }
       }
     }

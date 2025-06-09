@@ -102,7 +102,7 @@ export class Sprite {
     }
   }
 
-  public render(ctx: CanvasRenderingContext2D, x: number, y: number, scale = 1): void {
+      public render(ctx: CanvasRenderingContext2D, x: number, y: number, scale = 1): void {
     if (!this.isLoaded || !this.frames[this.currentFrame]) return;
 
     const frame = this.frames[this.currentFrame];

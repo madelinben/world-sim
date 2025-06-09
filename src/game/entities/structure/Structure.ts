@@ -41,6 +41,25 @@ export abstract class Structure implements AnimatedEntity {
   public renderAtScreenPosition(ctx: CanvasRenderingContext2D, screenX: number, screenY: number, scale = 1): void {
     if (this.isDestroyed) return;
     this.sprite.render(ctx, screenX, screenY, scale);
+
+    // Render health bar if damaged (similar to NPCs)
+    if (this.health < this.maxHealth) {
+      this.renderHealthBar(ctx, screenX, screenY);
+    }
+  }
+
+  protected renderHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const barWidth = 14;
+    const barHeight = 2;
+    const healthPercent = this.health / this.maxHealth;
+
+    // Background (red)
+    ctx.fillStyle = 'red';
+    ctx.fillRect(x + 1, y - 4, barWidth, barHeight);
+
+    // Foreground (green)
+    ctx.fillStyle = 'green';
+    ctx.fillRect(x + 1, y - 4, barWidth * healthPercent, barHeight);
   }
 
   public takeDamage(damage: number): { destroyed: boolean; dropValue: number; dropType: string } {

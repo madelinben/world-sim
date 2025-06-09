@@ -249,8 +249,8 @@ export class Chunk {
     // Check if new tile is available (excluding the NPC we're moving)
     const isImpassableTerrain = newTile.value === 'DEEP_WATER' || newTile.value === 'STONE' || newTile.value === 'COBBLESTONE' || newTile.value === 'SNOW' || newTile.value === 'SHALLOW_WATER';
     const hasLivingTrees = newTile.trees?.some(tree => tree.getHealth() > 0) ?? false;
-    const hasLivingCactus = newTile.cactus?.some(cactus => cactus.getHealth() > 0) ?? false;
-    const isNewTileBlocked = isImpassableTerrain || hasLivingTrees || hasLivingCactus;
+    // Cactus are now passable but will deal damage (removed cactus blocking logic)
+    const isNewTileBlocked = isImpassableTerrain || hasLivingTrees;
 
     if (isNewTileBlocked) {
       return false;
@@ -293,10 +293,8 @@ export class Chunk {
       return true;
     }
 
-    // Check for living cactus
-    if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) {
-      return true;
-    }
+    // Cactus are now passable but will deal damage (removed cactus blocking logic)
+    // Cactus damage will be handled separately when entities move onto cactus tiles
 
     // Check for village structures (POIs and NPCs)
     if (tile.villageStructures) {
@@ -322,6 +320,38 @@ export class Chunk {
 
   getAllNPCs(): Map<string, VillageStructure> {
     return this.entityData.npcStructures;
+  }
+
+  // Method to register an already-generated NPC structure from village generation
+  registerExistingNPC(localX: number, localY: number, npcStructure: VillageStructure): boolean {
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= this.size ||
+      localY >= this.size
+    ) {
+      return false;
+    }
+
+    const tileKey = `${localX},${localY}`;
+    const tile = this.getTile(localX, localY);
+
+    if (!tile || !npcStructure.npc) {
+      return false;
+    }
+
+    // Ensure the NPC structure is already in the tile's village structures
+    // (this should be the case from village generation)
+    const existsInTile = tile.villageStructures?.some(structure => structure === npcStructure) ?? false;
+    if (!existsInTile) {
+      console.warn(`NPC structure ${npcStructure.type} not found in tile's village structures at (${localX}, ${localY})`);
+      return false;
+    }
+
+    // Add to chunk's NPC tracking system
+    this.entityData.npcStructures.set(tileKey, npcStructure);
+
+    return true;
   }
 
   removeDeadNPC(localX: number, localY: number): VillageStructure | null {

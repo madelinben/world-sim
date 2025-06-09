@@ -29,8 +29,6 @@ export class SpriteGenerator {
     private spriteImages = new Map<string, HTMLImageElement>();
     private static TILE_SIZE = 16;
     private static SPRITE_FILES = [
-        // Characters
-        '/sprites/Characters/champions/Okomo.png',
         // Objects
         '/sprites/Objects/SwordShort.png',
         '/sprites/Objects/Spear.png',
@@ -51,10 +49,9 @@ export class SpriteGenerator {
         '/sprites/Animals/Chick.png',
         '/sprites/Animals/Boar.png',
         // Buildings
-        '/sprites/Buildings/wood/Barracks.png',
-        '/sprites/Buildings/wood/CaveV2.png',
-        '/sprites/Buildings/wood/Docks.png',
-        '/sprites/Buildings/wood/Houses.png',
+        '/sprites/Buildings/Wood/Market.png',
+        '/sprites/Buildings/Wood/Resources.png',
+        '/sprites/Miscellaneous/Well.png',
         // Ground
         '/sprites/Ground/TexturedGrass.png',
         '/sprites/Ground/Shore.png',
@@ -79,6 +76,20 @@ export class SpriteGenerator {
         '/sprites/Nature/Tumbleweed.png',
         '/sprites/Nature/Trees.png',
         '/sprites/Nature/PineTrees.png',
+        // Characters - Trader Templates
+        '/sprites/Characters/Soldiers/Melee/AxemanTemplate.png',
+        '/sprites/Characters/Soldiers/Melee/SwordsmanTemplate.png',
+        '/sprites/Characters/Soldiers/Melee/SpearmanTemplate.png',
+        '/sprites/Characters/Workers/FarmerTemplate.png',
+        // Characters - Monsters
+        '/sprites/Characters/Monsters/Orcs/ArcherGoblin.png',
+        '/sprites/Characters/Monsters/Orcs/ClubGoblin.png',
+        '/sprites/Characters/Monsters/Orcs/FarmerGoblin.png',
+        '/sprites/Characters/Monsters/Orcs/Orc.png',
+        '/sprites/Characters/Monsters/Orcs/OrcShaman.png',
+        '/sprites/Characters/Monsters/Orcs/SpearGoblin.png',
+        '/sprites/Characters/Monsters/Slimes/MegaSlimeBlue.png',
+        '/sprites/Characters/Monsters/Slimes/Slime.png'
     ];
 
     constructor() {

@@ -110,9 +110,13 @@ export class Controls {
     }
 
     public update(): void {
-        // Reset justPressed after each frame
-        this.justPressed = {};
+        // Don't reset justPressed here - it should be reset after actions are processed
         // Reset drag delta after each frame (no logging)
+    }
+
+    public clearJustPressed(): void {
+        // Reset justPressed states - to be called after actions are processed
+        this.justPressed = {};
     }
 
     public getMouseClick(): { x: number; y: number } | null {
