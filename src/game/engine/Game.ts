@@ -10,8 +10,13 @@ import { Player as PlayerEntity } from '~/game/entities/player/Player';
 import { UIManager } from '../ui/UIManager';
 import { Inventory, type InventoryItem } from '../entities/inventory/Inventory';
 import { Dungeon } from '../world/Dungeon';
+import { Chest } from '../entities/poi/Chest';
 
 import { PlayerScoreSystem } from '~/game/systems/PlayerScoreSystem';
+import { getAnimalSound } from '../translations/animals';
+import { getMonsterSound } from '../translations/monsters';
+import { getTraderGreeting } from '../translations/traders';
+import { generateVillageNotice } from '../translations/villages';
 
 // Player helper class for adjacent tile logic
 export class Player {
@@ -45,6 +50,8 @@ export class Game {
     private lastNPCs = '';
     private lastPOIs = '';
     private player!: PlayerEntity;
+    private pendingPortalReturn = false;
+    private portalDiscoveryShown = false; // Track if portal discovery message was shown
 
     constructor(canvas: HTMLCanvasElement, seed?: string) {
         this.canvas = canvas;
@@ -143,13 +150,16 @@ export class Game {
         // Update player animation
         this.player.update(deltaTime);
 
+        // Update UI animations
+        this.camera.uiManager.update(deltaTime);
+
         // Update camera
         this.camera.update(this.gameState.player.position);
 
         // Update world or dungeon based on rendering mode
         const inventoryItems = this.player.getInventoryItems().filter(item => item !== null);
         if (this.camera.renderingMode === 'dungeon') {
-            this.dungeon.update(deltaTime, this.gameState.player.position, inventoryItems);
+            this.dungeon.update(deltaTime, this.gameState.player.position, inventoryItems, this.camera);
         } else {
             this.world.update(deltaTime, this.gameState.player.position, inventoryItems);
         }
@@ -236,7 +246,7 @@ export class Game {
     }
 
     private handlePlayerActions(): void {
-        // Handle ESC key to close any open UI components
+        // Handle ESC key to close any open UI components or open menu
         if (this.controls.wasKeyJustPressed('escape')) {
             if (this.camera.uiManager.isTombstoneUIVisible()) {
                 this.camera.uiManager.hideTombstoneUI();
@@ -250,6 +260,45 @@ export class Game {
                 this.camera.uiManager.closeInventoryUI();
                 return;
             }
+            if (this.camera.uiManager.isChestUIVisible()) {
+                this.camera.uiManager.hideChestUI();
+                return;
+            }
+            if (this.camera.uiManager.isMenuUIVisible()) {
+                this.camera.uiManager.hideMenuUI();
+                return;
+            }
+            // If no UI is open, open the menu
+            this.camera.uiManager.showMenuUI();
+            return;
+        }
+
+        // Handle menu UI navigation and actions
+        if (this.camera.uiManager.isMenuUIVisible()) {
+            // Handle menu navigation with up/down arrows
+            if (this.controls.wasKeyJustPressed('up')) {
+                this.camera.uiManager.navigateMenu('up');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('down')) {
+                this.camera.uiManager.navigateMenu('down');
+                return;
+            }
+
+            // Handle menu selection with Enter key
+            if (this.controls.wasKeyJustPressed('interact') || this.controls.wasKeyJustPressed('inventory')) {
+                const selectedOption = this.camera.uiManager.getSelectedMenuOption();
+                if (selectedOption === 'Back to Game') {
+                    this.camera.uiManager.hideMenuUI();
+                } else if (selectedOption === 'Save Game') {
+                    this.saveGame();
+                    this.camera.uiManager.hideMenuUI();
+                }
+                return;
+            }
+
+            // Don't process other actions while menu is visible
+            return;
         }
 
         // Handle tombstone UI navigation and actions
@@ -286,17 +335,85 @@ export class Game {
             return;
         }
 
+        // Handle chest UI actions
+        if (this.camera.uiManager.isChestUIVisible()) {
+            // Handle arrow key navigation
+            if (this.controls.wasKeyJustPressed('left')) {
+                this.camera.uiManager.navigateChestInventory('left');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('right')) {
+                this.camera.uiManager.navigateChestInventory('right');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('up')) {
+                this.camera.uiManager.navigateChestInventory('up');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('down')) {
+                this.camera.uiManager.navigateChestInventory('down');
+                return;
+            }
+
+            // Handle take all items (Z key)
+            if (this.controls.wasKeyJustPressed('take_all')) {
+                this.handleTakeAllChestItems();
+                return;
+            }
+
+            // Handle take selected item (X key)
+            if (this.controls.wasKeyJustPressed('take_selected')) {
+                this.handleTakeSelectedChestItem();
+                return;
+            }
+
+            // Handle close chest UI (F key)
+            if (this.controls.wasKeyJustPressed('interact')) {
+                this.camera.uiManager.hideChestUI();
+                return;
+            }
+
+            // Don't process other actions while chest UI is visible
+            return;
+        }
+
         // Handle keyboard input to dismiss text box
         if (this.camera.uiManager.isTextBoxVisible()) {
-            // Any key press dismisses the text box
-            if (this.controls.wasAnyKeyPressed()) {
+            // Check if F key specifically was pressed (for interact dismissal)
+            if (this.controls.wasKeyJustPressed('interact')) {
                 this.camera.uiManager.hideTextBox();
-                return; // Don't process other actions while text box is visible
+                // Set flag to prevent further processing of this interact keypress
+                this.portalDiscoveryShown = true;
+                return;
             }
+            // Any other key press dismisses the text box
+            if (this.controls.wasAnyKeyPressed() && !this.controls.wasKeyJustPressed('interact')) {
+                this.camera.uiManager.hideTextBox();
+                return;
+            }
+            return; // Don't process other actions while text box is visible
         }
 
         // Handle inventory UI actions
         if (this.camera.uiManager.isInventoryUIVisible()) {
+            // Handle arrow key navigation in player inventory UI
+            if (this.controls.wasKeyJustPressed('up')) {
+                this.camera.uiManager.navigatePlayerInventory('up');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('down')) {
+                this.camera.uiManager.navigatePlayerInventory('down');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('left')) {
+                this.camera.uiManager.navigatePlayerInventory('left');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('right')) {
+                this.camera.uiManager.navigatePlayerInventory('right');
+                return;
+            }
+
             // Handle inventory slot selection (1-9) - allowed in inventory UI
             for (let i = 1; i <= 9; i++) {
                 if (this.controls.wasKeyJustPressed(`slot${i}`)) {
@@ -475,41 +592,62 @@ export class Game {
     }
 
     private handleInteract(): void {
+        // Check if we just dismissed a textbox with F key - if so, skip this interaction
+        if (this.portalDiscoveryShown) {
+            this.portalDiscoveryShown = false;
+            return;
+        }
+
         const facingPos = this.player.getFacingPosition(WorldGenerator.TILE_SIZE);
         const tileX = Math.floor(facingPos.x / WorldGenerator.TILE_SIZE);
         const tileY = Math.floor(facingPos.y / WorldGenerator.TILE_SIZE);
 
-        const tile = this.world.getTile(tileX, tileY);
-        console.log(`Interacting with tile at (${tileX}, ${tileY}):`, tile?.value);
+        // Get tile from appropriate source based on rendering mode
+        const tile = this.camera.renderingMode === 'dungeon' ?
+            this.dungeon.getTile(tileX, tileY) :
+            this.world.getTile(tileX, tileY);
 
-        // Check for tombstone interaction first
-        const tombstone = this.world.getTombstoneAt(tileX, tileY);
-        if (tombstone) {
-            console.log(`Interacting with tombstone: ${tombstone.getDisplayName()}`);
-            this.camera.uiManager.showTombstoneUI(tombstone);
-            return;
-        }
+        console.log(`Interacting with tile at (${tileX}, ${tileY}):`, tile?.value, `Mode: ${this.camera.renderingMode}`);
 
-        // Check for POI structures
-        const poi = this.world.getPOIAt(tileX, tileY);
-        if (poi?.type === 'notice_board') {
-            console.log('Interacting with notice board');
+        if (this.camera.renderingMode === 'world') {
+            // World-specific interactions
 
-            // Get pre-generated notice text and title from the notice board
-            const villageName = poi.customData?.villageName as string ?? 'Unknown Village';
-            const noticeTitle = poi.customData?.noticeTitle as string ?? `${villageName} Notice Board`;
-            const noticeText = poi.customData?.noticeText as string ?? `Welcome to ${villageName}!\n\nPress any key to continue...`;
+            // Check for tombstone interaction first
+            const tombstone = this.world.getTombstoneAt(tileX, tileY);
+            if (tombstone) {
+                console.log(`Interacting with tombstone: ${tombstone.getDisplayName()}`);
+                this.camera.uiManager.showTombstoneUI(tombstone);
+                return;
+            }
 
-            this.camera.uiManager.showTextBox({
-                text: noticeText,
-                title: noticeTitle,
-                villageName: villageName
-            });
-            return;
-        }
+            // Check for chest interaction
+            const chest = this.world.getChestAt(tileX, tileY);
+            if (chest) {
+                console.log(`Interacting with chest: ${chest.getDisplayName()}`);
+                this.camera.uiManager.showChestUI(chest);
+                return;
+            }
 
-        if (poi?.type === 'dungeon_entrance') {
-            if (this.camera.renderingMode === 'world') {
+            // Check for POI structures
+            const poi = this.world.getPOIAt(tileX, tileY);
+            if (poi?.type === 'notice_board') {
+                console.log('Interacting with notice board');
+
+                // Get village name from POI data or find nearest village
+                const villageName = poi.customData?.villageName as string ?? 'Unknown Village';
+
+                // Generate random village notice using translation system
+                const villageNotice = generateVillageNotice(villageName);
+
+                this.camera.uiManager.showTextBox({
+                    text: villageNotice.text,
+                    title: villageNotice.title,
+                    villageName: villageName
+                });
+                return;
+            }
+
+            if (poi?.type === 'dungeon_entrance') {
                 console.log('🏚️ Interacting with dungeon entrance - entering dungeon');
 
                 // Store entrance position for dungeon generation
@@ -523,67 +661,147 @@ export class Game {
                 this.player.position = spawnPosition;
                 this.gameState.player.position = spawnPosition;
                 this.camera.centerOnPlayer();
+                return;
+            }
+
+            // Check for NPCs (trader interaction)
+            const npc = this.world.getNPCAt(tileX, tileY);
+            if (npc && npc.category === 'friendly') {
+                console.log(`Interacting with trader: ${npc.type}`);
+
+                // Use trader translation system for greeting
+                const greeting = getTraderGreeting(npc.type);
+
+                // Find nearest village and get trader comment based on score
+                const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
+                let villageName = "Unknown Village";
+
+                if (nearestVillage) {
+                    const villageScore = this.scoreSystem.getVillageScore(nearestVillage);
+                    if (villageScore) {
+                        villageName = villageScore.villageName;
+                    }
+                }
+
+                this.camera.uiManager.showTextBox({
+                    text: greeting,
+                    title: `Trader in ${villageName}`,
+                    villageName: villageName
+                });
+                return;
+            }
+
+            // Check for animal interactions
+            if (npc && npc.category === 'animal') {
+                console.log(`Interacting with animal: ${npc.type}`);
+
+                const animalSound = getAnimalSound(npc.type);
+
+                this.camera.uiManager.showTextBox({
+                    text: animalSound,
+                    title: `${npc.type.charAt(0).toUpperCase() + npc.type.slice(1)}`,
+                    villageName: ''
+                });
+                return;
+            }
+
+            // Check for monster interactions
+            if (npc && npc.category === 'monster') {
+                console.log(`Interacting with monster: ${npc.type}`);
+
+                const monsterSound = getMonsterSound(npc.type);
+
+                this.camera.uiManager.showTextBox({
+                    text: monsterSound,
+                    title: `${npc.type.charAt(0).toUpperCase() + npc.type.slice(1)}`,
+                    villageName: ''
+                });
+                return;
+            }
+
+            // Check for other interactable structures
+            if (tile?.trees && tile.trees.length > 0) {
+                console.log('Interacting with tree - could harvest fruit, check growth, etc.');
+            } else if (tile?.cactus && tile.cactus.length > 0) {
+                console.log('Interacting with cactus - could harvest water, check growth, etc.');
             } else {
-                console.log('🏚️ Interacting with dungeon entrance - returning to surface');
-                this.camera.setRenderingMode('world');
-
-                // Return player to entrance position on surface
-                if (this.camera.dungeonEntrancePosition) {
-                    const spawnPosition = this.findNearestUnoccupiedTile(this.camera.dungeonEntrancePosition, 'world');
-                    this.player.position = spawnPosition;
-                    this.gameState.player.position = spawnPosition;
-                    this.camera.centerOnPlayer();
-                }
+                console.log('Nothing to interact with in that direction');
             }
-            return;
-        }
-
-        if (poi?.type === 'dungeon_portal') {
-            console.log('🚪 Interacting with dungeon portal - returning to surface');
-            this.camera.setRenderingMode('world');
-
-            // Return player to entrance position on surface
-            if (this.camera.dungeonEntrancePosition) {
-                const spawnPosition = this.findNearestUnoccupiedTile(this.camera.dungeonEntrancePosition, 'world');
-                this.player.position = spawnPosition;
-                this.gameState.player.position = spawnPosition;
-                this.camera.centerOnPlayer();
-            }
-            return;
-        }
-
-        // Check for NPCs (trader interaction)
-        const npc = this.world.getNPCAt(tileX, tileY);
-        if (npc && npc.category === 'friendly') {
-            console.log(`Interacting with trader: ${npc.type}`);
-
-            // Find nearest village and get trader comment based on score
-            const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
-            let comment = "Hello there, traveler.";
-            let villageName = "Unknown Village";
-
-            if (nearestVillage) {
-                const villageScore = this.scoreSystem.getVillageScore(nearestVillage);
-                if (villageScore) {
-                    comment = this.scoreSystem.getTraderComment(nearestVillage);
-                    villageName = villageScore.villageName;
-                }
-            }
-
-            this.camera.uiManager.showTextBox({
-                text: comment,
-                title: `Trader in ${villageName}`,
-                villageName: villageName
-            });
-            return;
-        }
-
-        // Check for other interactable structures
-        if (tile?.trees && tile.trees.length > 0) {
-            console.log('Interacting with tree - could harvest fruit, check growth, etc.');
-        } else if (tile?.cactus && tile.cactus.length > 0) {
-            console.log('Interacting with cactus - could harvest water, check growth, etc.');
         } else {
+            // Dungeon-specific interactions
+
+            // Check for dungeon POI structures
+            if (tile?.villageStructures) {
+                for (const structure of tile.villageStructures) {
+                    if (structure.poi) {
+                        const poi = structure.poi;
+
+                        if (poi.type === 'rare_chest') {
+                            console.log('🏺 Interacting with rare chest in dungeon');
+
+                                                                                    // Create chest object from POI data
+                            const chestInventory = poi.customData?.inventory as (InventoryItem | null)[] ?? [];
+                            const chestId = poi.customData?.chestId as string ?? `chest_${tileX}_${tileY}`;
+
+                                                        // Create a proper Chest instance for UI interaction
+                            const chest = new Chest({
+                                position: poi.position,
+                                inventory: chestInventory,
+                                chestType: 'rare_chest',
+                                chestId: chestId
+                            });
+
+                            this.camera.uiManager.showChestUI(chest);
+                            return;
+                        }
+
+                        if (poi.type === 'dungeon_entrance') {
+                            console.log('🏚️ Interacting with dungeon entrance - returning to surface');
+                            this.camera.setRenderingMode('world');
+
+                            // Return player to entrance position on surface
+                            if (this.camera.dungeonEntrancePosition) {
+                                const spawnPosition = this.findNearestUnoccupiedTile(this.camera.dungeonEntrancePosition, 'world');
+                                this.player.position = spawnPosition;
+                                this.gameState.player.position = spawnPosition;
+                                this.camera.centerOnPlayer();
+                            }
+                            return;
+                        }
+
+                        if (poi.type === 'dungeon_portal' && !poi.customData?.discovered) {
+                            console.log('🚪 Interacting with dungeon portal - showing discovery message');
+
+                            // Show random portal discovery quote and mark portal as discovered
+                            void import('../translations/portals').then(({ getPortalDiscoveryQuote }) => {
+                                const randomQuote = getPortalDiscoveryQuote();
+
+                                this.camera.uiManager.showTextBox({
+                                    text: randomQuote + '\n\nYou have discovered an ancient portal!',
+                                    title: 'Portal Discovery!'
+                                });
+                            });
+
+                            // Mark portal as discovered for next interaction
+                            poi.customData = poi.customData || {};
+                            poi.customData.discovered = true;
+                            return;
+                        }
+
+                        if (poi.type === 'dungeon_portal' && poi.customData?.discovered) {
+                            console.log('🚪 Interacting with discovered dungeon portal - showing message only');
+
+                            // For now, just show a message - no teleportation
+                            this.camera.uiManager.showTextBox({
+                                text: 'The portal shimmers with magical energy, but its power seems dormant for now...',
+                                title: 'Ancient Portal'
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
+
             console.log('Nothing to interact with in that direction');
         }
     }
@@ -634,12 +852,48 @@ export class Game {
         const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
         const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
 
-        // Log player position
+        // Update persistent info with current player position
+        this.camera.uiManager.updatePersistentInfo({
+            playerPosition: { x: playerTileX, y: playerTileY },
+            renderingMode: this.camera.renderingMode
+        });
+
+        // Find and update nearest structures
+        const nearestWell = this.findNearestStructure(playerTileX, playerTileY, 'water_well');
+        const nearestMine = this.findNearestStructure(playerTileX, playerTileY, 'mine_entrance');
+        const nearestDungeon = this.findNearestStructure(playerTileX, playerTileY, 'dungeon_entrance');
+
+        // Update persistent info with nearest structures
+        this.camera.uiManager.updatePersistentInfo({
+            nearestWell: nearestWell ? {
+                x: Math.floor(nearestWell.position.x / WorldGenerator.TILE_SIZE),
+                y: Math.floor(nearestWell.position.y / WorldGenerator.TILE_SIZE)
+            } : null,
+            nearestMine: nearestMine ? {
+                x: Math.floor(nearestMine.position.x / WorldGenerator.TILE_SIZE),
+                y: Math.floor(nearestMine.position.y / WorldGenerator.TILE_SIZE)
+            } : null,
+            nearestDungeon: nearestDungeon ? {
+                x: Math.floor(nearestDungeon.position.x / WorldGenerator.TILE_SIZE),
+                y: Math.floor(nearestDungeon.position.y / WorldGenerator.TILE_SIZE)
+            } : null
+        });
+
+        // If in dungeon mode, find nearest portal
+        if (this.camera.renderingMode === 'dungeon') {
+            const nearestPortal = this.findNearestDungeonPortal(playerTileX, playerTileY);
+            this.camera.uiManager.updatePersistentInfo({
+                nearestPortal: nearestPortal ? {
+                    x: Math.floor(nearestPortal.position.x / WorldGenerator.TILE_SIZE),
+                    y: Math.floor(nearestPortal.position.y / WorldGenerator.TILE_SIZE)
+                } : null
+            });
+        }
+
+        // Legacy console log calls for backwards compatibility
         const playerPosLog = `Player: (${playerTileX}, ${playerTileY})`;
         this.camera.uiManager.addConsoleLog(playerPosLog);
 
-        // Find and log nearest village well
-        const nearestWell = this.findNearestStructure(playerTileX, playerTileY, 'water_well');
         if (nearestWell) {
             const wellTileX = Math.floor(nearestWell.position.x / WorldGenerator.TILE_SIZE);
             const wellTileY = Math.floor(nearestWell.position.y / WorldGenerator.TILE_SIZE);
@@ -647,8 +901,6 @@ export class Game {
             this.camera.uiManager.addConsoleLog(wellLog);
         }
 
-        // Find and log nearest dungeon entrance
-        const nearestDungeon = this.findNearestStructure(playerTileX, playerTileY, 'dungeon_entrance');
         if (nearestDungeon) {
             const dungeonTileX = Math.floor(nearestDungeon.position.x / WorldGenerator.TILE_SIZE);
             const dungeonTileY = Math.floor(nearestDungeon.position.y / WorldGenerator.TILE_SIZE);
@@ -696,15 +948,99 @@ export class Game {
         return nearestStructure;
     }
 
+    private findNearestDungeonPortal(playerTileX: number, playerTileY: number): { position: { x: number; y: number } } | null {
+        // Get the cached portal position from the dungeon system
+        const portalPosition = this.dungeon.getPortalPosition();
+
+        if (portalPosition) {
+            return { position: portalPosition };
+        }
+
+        // Fallback: search for portal if not cached (should not happen with new system)
+        let nearestPortal: { position: { x: number; y: number } } | null = null;
+        let nearestDistance = Infinity;
+
+        // Search in a reasonable radius around the player for dungeon portals
+        const searchRadius = 100; // Large search radius since dungeons can be big
+
+        for (let x = playerTileX - searchRadius; x <= playerTileX + searchRadius; x++) {
+            for (let y = playerTileY - searchRadius; y <= playerTileY + searchRadius; y++) {
+                const tile = this.dungeon.getTile(x, y);
+                if (tile?.villageStructures) {
+                    for (const structure of tile.villageStructures) {
+                        if (structure.poi?.type === 'dungeon_portal') {
+                            const distance = Math.sqrt(Math.pow(x - playerTileX, 2) + Math.pow(y - playerTileY, 2));
+                            if (distance < nearestDistance) {
+                                nearestDistance = distance;
+                                nearestPortal = { position: structure.position };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return nearestPortal;
+    }
+
     public saveGame(): void {
-        const gameStateString = JSON.stringify(this.gameState);
-        localStorage.setItem('gameState', gameStateString);
+        console.log('💾 Saving game...');
+
+        try {
+            const gameData = {
+                player: {
+                    position: this.gameState.player.position,
+                    health: this.player.health,
+                    inventory: this.player.getInventoryItems(),
+                    selectedSlot: this.player.getSelectedSlot()
+                },
+                world: {
+                    timestamp: Date.now()
+                },
+                version: '1.0.0'
+            };
+
+            const saveData = JSON.stringify(gameData);
+            localStorage.setItem('world-sim-save', saveData);
+
+            console.log('✅ Game saved successfully!');
+
+            // Show save confirmation
+            this.camera.uiManager.showTextBox({
+                text: 'Game saved successfully!\n\nPress any key to continue...',
+                title: 'Save Complete'
+            });
+        } catch (error) {
+            console.error('❌ Failed to save game:', error);
+
+            // Show save error
+            this.camera.uiManager.showTextBox({
+                text: 'Failed to save game. Please try again.\n\nPress any key to continue...',
+                title: 'Save Error'
+            });
+        }
     }
 
     public loadGame(): void {
-        const savedState = localStorage.getItem('gameState');
-        if (savedState) {
-            this.gameState = JSON.parse(savedState) as GameState;
+        console.log('📁 Loading game...');
+
+        try {
+            const saveData = localStorage.getItem('world-sim-save');
+            if (!saveData) {
+                console.log('No save data found');
+                return;
+            }
+
+            console.log('✅ Save data found (load functionality not fully implemented yet)');
+
+            // Show load message
+            this.camera.uiManager.showTextBox({
+                text: 'Save data found, but loading is not fully implemented yet.\n\nPress any key to continue...',
+                title: 'Load Game'
+            });
+
+        } catch (error) {
+            console.error('❌ Failed to load game:', error);
         }
     }
 
@@ -961,6 +1297,162 @@ export class Game {
                     if (targetTileX === playerTileX && targetTileY === playerTileY) {
                         console.log(`🗡️ ${npc.type} attacks player!`);
                         this.player.takeDamage(5); // Monsters deal 5 damage
+                    }
+                }
+            }
+        }
+    }
+
+    // Chest handling methods
+    private handleTakeAllChestItems(): void {
+        const chest = this.camera.uiManager.getCurrentChest();
+        if (!chest) return;
+
+        const dualMode = this.camera.uiManager.getDualInventoryMode();
+
+        if (dualMode === 'container') {
+            // Transfer all items from chest to player
+            let itemsTransferred = 0;
+
+            for (const [i, item] of chest.inventory.entries()) {
+                if (item && item.quantity > 0) {
+                    const added = this.player.addToInventory(item.type, item.quantity);
+                    if (added) {
+                        console.log(`✅ Transferred ${item.quantity}x ${item.type} from chest to player`);
+                        chest.inventory[i] = null; // Remove from chest
+                        itemsTransferred++;
+                    } else {
+                        console.log(`❌ Player inventory full! Could not transfer ${item.quantity}x ${item.type}`);
+                        break; // Stop if inventory is full
+                    }
+                }
+            }
+
+            console.log(`Transferred ${itemsTransferred} items from chest to player`);
+        } else {
+            // Transfer all items from player to chest
+            let itemsTransferred = 0;
+            const playerInventory = this.player.getInventoryItems();
+
+            for (const [i, item] of playerInventory.entries()) {
+                if (item && item.quantity > 0) {
+                    // Find empty slot in chest
+                    const emptySlot = chest.inventory.findIndex(slot => slot === null);
+                    if (emptySlot !== -1) {
+                        chest.inventory[emptySlot] = { ...item }; // Copy item to chest
+                        this.player.removeFromInventory(item.type, item.quantity); // Remove from player
+                        console.log(`✅ Transferred ${item.quantity}x ${item.type} from player to chest`);
+                        itemsTransferred++;
+                    } else {
+                        console.log(`❌ Chest full! Could not transfer ${item.quantity}x ${item.type}`);
+                        break; // Stop if chest is full
+                    }
+                }
+            }
+
+            console.log(`Transferred ${itemsTransferred} items from player to chest`);
+        }
+
+        // Update chest inventory in tile cache
+        this.updateChestInventoryInCache(chest);
+    }
+
+    private handleTakeSelectedChestItem(): void {
+        const chest = this.camera.uiManager.getCurrentChest();
+        if (!chest) return;
+
+        const dualMode = this.camera.uiManager.getDualInventoryMode();
+
+        if (dualMode === 'container') {
+            // Transfer selected item from chest to player
+            const selectedSlot = this.camera.uiManager.getChestSelectedSlot();
+            const item = chest.inventory[selectedSlot];
+
+            if (item && item.quantity > 0) {
+                const added = this.player.addToInventory(item.type, item.quantity);
+                if (added) {
+                    console.log(`✅ Transferred ${item.quantity}x ${item.type} from chest to player`);
+                    chest.inventory[selectedSlot] = null; // Remove from chest
+                } else {
+                    console.log(`❌ Player inventory full! Could not transfer ${item.quantity}x ${item.type}`);
+                }
+            } else {
+                console.log('No item selected in chest');
+            }
+        } else {
+            // Transfer selected item from player to chest
+            const selectedSlot = this.camera.uiManager.getPlayerSelectedSlot();
+            const playerInventory = this.player.getInventoryItems();
+            const item = playerInventory[selectedSlot];
+
+            if (item && item.quantity > 0) {
+                // Find empty slot in chest
+                const emptySlot = chest.inventory.findIndex(slot => slot === null);
+                if (emptySlot !== -1) {
+                    chest.inventory[emptySlot] = { ...item }; // Copy item to chest
+                    this.player.removeFromInventory(item.type, item.quantity); // Remove from player
+                    console.log(`✅ Transferred ${item.quantity}x ${item.type} from player to chest`);
+                } else {
+                    console.log(`❌ Chest full! Could not transfer ${item.quantity}x ${item.type}`);
+                }
+            } else {
+                console.log('No item selected in player inventory');
+            }
+        }
+
+        // Update chest inventory in tile cache
+        this.updateChestInventoryInCache(chest);
+    }
+
+    private updateChestInventoryInCache(chest: Chest): void {
+        // Update chest inventory in appropriate cache (world or dungeon)
+        if (this.camera.renderingMode === 'dungeon') {
+            this.updateDungeonChestInventory(chest.chestId, chest.inventory);
+        } else {
+            this.updateWorldChestInventory(chest.chestId, chest.inventory);
+        }
+    }
+
+    private updateWorldChestInventory(chestId: string, inventory: (InventoryItem | null)[]): void {
+        // Find the chest in world tiles and update its inventory
+        const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
+        const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
+
+        // Search in a radius around the player for the chest
+        for (let x = playerTileX - 2; x <= playerTileX + 2; x++) {
+            for (let y = playerTileY - 2; y <= playerTileY + 2; y++) {
+                const tile = this.world.getTile(x, y);
+                if (tile?.villageStructures) {
+                    for (const structure of tile.villageStructures) {
+                        if (structure.poi && structure.poi.type === 'rare_chest' &&
+                            structure.poi.customData?.chestId === chestId) {
+                            structure.poi.customData.inventory = inventory;
+                            console.log(`💾 Updated world chest inventory for ${chestId}`);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private updateDungeonChestInventory(chestId: string, inventory: (InventoryItem | null)[]): void {
+        // Find the chest in dungeon tiles and update its inventory
+        const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
+        const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
+
+        // Search in a radius around the player for the chest
+        for (let x = playerTileX - 2; x <= playerTileX + 2; x++) {
+            for (let y = playerTileY - 2; y <= playerTileY + 2; y++) {
+                const tile = this.dungeon.getTile(x, y);
+                if (tile?.villageStructures) {
+                    for (const structure of tile.villageStructures) {
+                        if (structure.poi && structure.poi.type === 'rare_chest' &&
+                            structure.poi.customData?.chestId === chestId) {
+                            structure.poi.customData.inventory = inventory;
+                            console.log(`💾 Updated dungeon chest inventory for ${chestId}`);
+                            return;
+                        }
                     }
                 }
             }

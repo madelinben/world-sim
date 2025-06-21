@@ -273,6 +273,29 @@ export const ASSET_MAP: Record<string, AssetMapping> = {
     properties: { maxStack: 64 }
   },
 
+  // Ores & Ingots - Extended
+  coal: {
+    name: 'Coal',
+    spritePath: '/sprites/User Interface/Icons-Essentials.png',
+    index: 3,
+    category: 'inventory',
+    properties: { maxStack: 64 }
+  },
+  silver_ore: {
+    name: 'Silver Ore',
+    spritePath: '/sprites/User Interface/Icons-Essentials.png',
+    index: 4,
+    category: 'inventory',
+    properties: { maxStack: 64 }
+  },
+  bone: {
+    name: 'Bone',
+    spritePath: '/sprites/User Interface/Icons-Essentials.png',
+    index: 5,
+    category: 'inventory',
+    properties: { maxStack: 64 }
+  },
+
   // POI - Fire Effects
   fireball_frame_0: {
     name: 'Fireball',

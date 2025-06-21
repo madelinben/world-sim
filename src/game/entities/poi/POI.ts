@@ -2,6 +2,7 @@ import type { Position } from '../../engine/types';
 import type { InventoryItem } from '../inventory/Inventory';
 import { ASSET_MAP, type AssetMapping } from '../../assets/AssetMap';
 import { getAssetPath } from '../../utils/assetPath';
+import { getPOIMessage } from '../../translations/ui';
 
 export interface POIInteractionResult {
   success: boolean;
@@ -183,7 +184,7 @@ export class POI {
 
     return {
       success: true,
-      message: `Opened ${isRare ? 'rare' : 'normal'} chest!`,
+      message: getPOIMessage('chest', isRare ? 'rare_opened' : 'normal_opened'),
       items,
       openUI: 'chest'
     };
@@ -192,22 +193,17 @@ export class POI {
   private handleWellInteraction(): POIInteractionResult {
     return {
       success: true,
-      message: 'You drink fresh water from the well. Health restored!',
+      message: getPOIMessage('well', 'drink'),
       healthChange: 25
     };
   }
 
   private handlePortalInteraction(): POIInteractionResult {
-    // Teleport to a predefined location or random safe location
-    const teleportDestination: Position = {
-      x: Math.floor(Math.random() * 1000) * 16,
-      y: Math.floor(Math.random() * 1000) * 16
-    };
-
+    // For now, portal interaction only shows textbox - no teleportation
     return {
       success: true,
-      message: 'You step through the portal...',
-      teleportTo: teleportDestination
+      message: getPOIMessage('portal', 'step_through')
+      // teleportTo removed - no teleportation functionality for now
     };
   }
 
@@ -217,13 +213,13 @@ export class POI {
     if (isEmpty) {
       return {
         success: true,
-        message: 'The notice board is empty. You could post a message here.',
+        message: getPOIMessage('notice_board', 'empty'),
         openUI: 'notice_board'
       };
     } else {
       return {
         success: true,
-        message: 'Reading the notices on the board...',
+        message: getPOIMessage('notice_board', 'reading'),
         openUI: 'notice_board'
       };
     }
@@ -235,7 +231,7 @@ export class POI {
 
     return {
       success: true,
-      message: 'You retrieve items from the grave...',
+      message: getPOIMessage('tombstone', 'retrieve'),
       items
     };
   }
@@ -249,13 +245,13 @@ export class POI {
 
       return {
         success: true,
-        message: 'You harvest the wheat field!',
+        message: getPOIMessage('wheat_field', 'harvest'),
         items
       };
     } else {
       return {
         success: false,
-        message: 'The wheat is not ready for harvest yet.'
+        message: getPOIMessage('wheat_field', 'not_ready')
       };
     }
   }
@@ -263,26 +259,26 @@ export class POI {
   private handleBoatInteraction(): POIInteractionResult {
     return {
       success: true,
-      message: 'You board the boat. You can now travel on water!'
+      message: getPOIMessage('boat', 'board')
     };
   }
 
   private handleMarketInteraction(): POIInteractionResult {
     const marketType = 'market' as const;
-    let message = 'Welcome to the market!';
+    let message = getPOIMessage('market', 'welcome');
 
     switch (this.type) {
       case 'food_market':
-        message = 'Welcome to the food market!';
+        message = getPOIMessage('market', 'food');
         break;
       case 'butcher_market':
-        message = 'Welcome to the butcher!';
+        message = getPOIMessage('market', 'butcher');
         break;
       case 'armory_market':
-        message = 'Welcome to the armory!';
+        message = getPOIMessage('market', 'armory');
         break;
       case 'cloth_market':
-        message = 'Welcome to the cloth market!';
+        message = getPOIMessage('market', 'cloth');
         break;
     }
 
@@ -298,7 +294,7 @@ export class POI {
 
     return {
       success: true,
-      message: `You enter the ${ismine ? 'mine' : 'dungeon'}...`,
+      message: getPOIMessage('entrance', ismine ? 'mine' : 'dungeon'),
       teleportTo: {
         x: this.position.x,
         y: this.position.y + 100 // Enter underground

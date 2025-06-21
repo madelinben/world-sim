@@ -232,7 +232,8 @@ All NPCs now have 9-slot inventories with randomly generated items:
 - **Enhanced NPC Movement Space**: Significantly expanded passable areas for NPC movement throughout dungeons
 - **Moderate Branching**: Secondary tunnels (15-30 tiles) with 25% spawn chance for exploration variety
 - **Larger Size**: Total dungeon area approximately 500 tiles for substantial exploration
-- **Deterministic Generation**: Same entrance always generates same dungeon layout
+- **Deterministic Generation**: Same entrance always generates same dungeon layout based on entrance world coordinates
+- **Monster Exclusion Zone**: 10x10 tile area around dungeon entrance prevents monster spawning for safe entry
 
 ### **Enhanced Tunnel Architecture for NPC Movement**
 - **Entrance Area**: 8-tile radius around entrance guaranteed to be tunnel (increased from 5 tiles for safe spawn zone)
@@ -242,6 +243,45 @@ All NPCs now have 9-slot inventories with randomly generated items:
 - **Connecting Corridors**: Additional corridor system (distance < 40, noise < 0.15) linking rooms and branches
 - **Void Boundaries**: All non-tunnel areas are VOID tiles (impassable black areas)
 - **Mixed Flooring**: Random mix of STONE (60%) and COBBLESTONE (40%) for visual variety
+
+### **Camera-View-Based NPC Updates**
+The dungeon implements the same sophisticated NPC update system as the world:
+- **Camera-Based Radius**: NPCs updated within camera view + 5-tile buffer (adaptive to screen resolution)
+- **Performance Optimization**: Only visible NPCs are updated for smooth gameplay
+- **Two-Phase Movement**: Same advanced movement coordination as world system
+- **Flocking Algorithm**: All NPCs share movement intentions for deadlock resolution
+
+### **Rare Chest System**
+- **Maximum Limit**: Up to 10 rare chests per dungeon for balanced treasure distribution
+- **Even Distribution**: Grid-based spawning system (6-tile spacing) ensures chests are evenly distributed throughout dungeon
+- **High Spawn Rates**: 15% base chance for common chest generation throughout dungeon areas
+- **Distance Requirement**: Chests spawn 8+ tiles from entrance to avoid overcrowding entry area
+- **No Noise Threshold**: Simplified generation removes complex noise requirements for more reliable spawning
+- **Impassable Barriers**: Chests block both player and NPC movement
+- **Random Inventory Generation**: Each chest contains 0-7 randomly selected items:
+  - **Ores**: Copper ore (0-5), iron ore (0-3), gold ore (0-2), coal (0-4)
+  - **Precious Materials**: Silver ore (0-3), gold ingots (0-2)
+  - **Monster Parts**: Bones (0-15)
+- **Deterministic Content**: Same chest always contains same items based on entrance position seed
+- **Dual Inventory UI**: Player inventory (left 50%) and chest inventory (right 50%)
+- **Bidirectional Transfers**: Arrow keys navigate between inventories, X/Z keys transfer items
+- **Persistent Storage**: Chest inventories saved in tile cache data
+
+### **Portal Discovery System** - Enhanced December 2024
+- **Single Persistent Portal**: Exactly one portal spawns at the furthest accessible point (45-50 tiles from entrance)
+- **Deterministic Placement**: Portal spawns at the furthest valid tunnel location from entrance using noise-based selection
+- **Cached Position**: Portal location is permanently stored in dungeon tile cache data for consistency
+- **Cross-Session Persistence**: Portal remains in same location when re-entering the same dungeon entrance
+- **Console UI Integration**: Portal position displayed in console UI when in dungeon mode
+- **Famous Game Quotes**: Random selection from Zelda, Skyrim, D&D, Mario, Minecraft:
+  - "It's dangerous to go alone! Take this." (Zelda)
+  - "You have found something truly special!"
+  - "The portal shimmers with ancient magic..."
+  - "A gateway to adventure awaits!"
+- **Two-Stage Interaction**: First interaction shows discovery message, second interaction teleports
+- **Safe Return**: Portal returns player to nearest unoccupied tile near dungeon entrance
+- **Guaranteed Generation**: System ensures exactly one portal is generated per dungeon
+- **No "NOT FOUND" Display**: Console UI always shows portal location once generated
 
 ### **Advanced Dungeon NPC Movement System**
 
@@ -283,7 +323,8 @@ The dungeon implements the same sophisticated flocking algorithm as the world sy
 - **Single Portal Generation**: Exactly one portal spawns 45-50 tiles from entrance (30% chance per valid tile)
 - **Guaranteed Exit**: Portal generation ensures players can always return to surface
 - **Portal Exit**: F key interaction returns to surface at nearest unoccupied tile to entrance
-- **Cache Management**: Dungeon chunks automatically cleared when entering new dungeons for fresh generation
+- **Smart Cache Management**: Dungeon chunks preserved when re-entering same dungeon, cleared only when entering different dungeons
+- **Portal Position Persistence**: Portal location cached and preserved across dungeon visits for consistency
 
 ### **Rendering System Isolation**
 - **Complete Isolation**: Dungeon mode shows only dungeon content (no world trees/NPCs/health bars)
@@ -295,39 +336,76 @@ The dungeon implements the same sophisticated flocking algorithm as the world sy
 
 ### **Dungeon Features & Rewards**
 
-#### **Enhanced Monster Distribution**
-- **Proximity-Based Spawning**: Monster density increases with distance from entrance
-- **Enhanced Spawn Rate**: Base 10% + (distance × 0.8%) up to 40% maximum for larger dungeons
-- **Lowered Threshold**: Uses monster noise threshold (0.6) with relaxed filtering for more spawns
+#### **High Amplitude Noise Entity System**
+- **Single Noise Function**: Uses high amplitude noise to determine all entity placement (monsters, chests, portals)
+- **Threshold-Based Spawning**: Different noise amplitude ranges spawn different entity types
+- **Environment-Agnostic**: Reusable system for dungeons, caves, forests with different thresholds
+- **No Circular Dependencies**: Clean architecture eliminates complex tile-checking during generation
+
+#### **Dungeon Entity Thresholds** - Updated December 2024
+- **Monsters**: 60-85% noise amplitude (25% of tunnel tiles, increased from 15%)
+- **Chests**: 85-95% noise amplitude (10% of tunnel tiles)
+- **Portals**: 95-100% noise amplitude (5% of tunnel tiles, rarest)
+
+#### **Enhanced Monster Distribution** - Updated December 2024
+- **Increased Spawn Rate**: Monsters spawn at high noise peaks (60-85% amplitude, increased from 70-85%)
+- **Higher Monster Frequency**: 25% increase in monster encounters throughout dungeons
+- **Minimum Spacing**: 3-tile minimum distance between monsters prevents overcrowding
 - **Monster Variety**: Same types as surface (orcs, skeletons, goblins, slimes, etc.)
 - **Aggressive Behavior**: All dungeon monsters are hostile by default
-- **Guaranteed Spawning**: Improved spawn algorithm ensures monsters appear throughout dungeon
+- **Entrance Exclusion**: 10-tile radius around entrance remains monster-free for safe entry
+- **Performance Optimized**: Reduced console logging (only 10% of spawns logged) to prevent lag during generation
 
 #### **Treasure Chest System**
-- **Distance-Based Rarity**: Chest spawn rate increases deeper in dungeon
-- **Enhanced Spawn Rate**: Base 4% + (distance × 0.3%) up to 25% maximum for larger dungeons
+- **Amplitude-Based Placement**: Chests spawn at highest noise peaks (85-95% amplitude)
+- **Minimum Spacing**: 4-tile minimum distance between chests prevents overcrowding
+- **Maximum Limit**: 10 chests per dungeon for balanced treasure distribution
 - **Quality Scaling**: Loot quality improves with distance from entrance (adjusted for 50-tile depth)
 - **Chest Contents by Depth**:
   - **Shallow (0-20 tiles)**: Copper ore, iron ore, gold ore, leather
   - **Medium (20-35 tiles)**: Above + gold ingots, rare gems
   - **Deep (35-50 tiles)**: Above + magic potions, ancient artifacts
+- **Deterministic Generation**: Same entrance position always generates same chest locations and contents
+- **Performance Optimized**: Reduced console logging (only first 3 chests and every 3rd chest logged) to prevent lag during generation
 
-### **Player Experience**
+#### **Reusable Entity Spawning System**
+- **Static Utility Method**: `Dungeon.getEntitySpawnType()` for cross-environment use
+- **Environment Support**: Dungeons, caves, forests with different entity types and thresholds
+- **Extensible Design**: Easy to add new environments and entity types
+- **Clean Architecture**: Single noise evaluation per tile, no complex proximity checking during generation
+
+### **Player Experience** - Updated December 2024
 - **Safe Entry**: Entrance area guaranteed passable for player spawning
 - **Substantial Exploration**: Larger tunnel system provides meaningful adventure while maintaining clear progression
 - **Progressive Difficulty**: Monsters and rewards increase with exploration depth over 50-tile journey
 - **Single Guaranteed Exit**: Exactly one portal ensures focused exit strategy and prevents confusion
-- **Enhanced Monster Encounters**: Improved spawn rates guarantee combat encounters throughout exploration
+- **Increased Monster Encounters**: 25% increase in monster spawn rates guarantees more frequent combat
+- **Enhanced Tunnel Width**: Expanded tunnel generation (0.5 threshold vs 0.35) provides more movement space
+- **Improved NPC Movement**: Extended branching, room systems, and connecting corridors for better NPC navigation
 - **Clean Interface**: No world content bleeding into dungeon view for immersive experience
 - **Balanced Risk vs Reward**: Better loot deeper in dungeon balances increased monster danger and exploration time
 
 ## 🎒 **Inventory System**
 
 ### **Inventory Structure**
-- **Slots**: 9 inventory slots (accessible via keys 1-9)
+- **Slots**: 9 inventory slots (accessible via keys 1-9) in 3x3 grid layout
 - **Stacking**: Items stack up to their max stack size
 - **Selection**: Number keys 1-9 select inventory slots
 - **Display**: Visual UI on right side of screen with sprites
+
+### **Equipment & Armor System**
+- **Armor Slots**: 7 dedicated equipment slots for character customization
+- **Slot Types**:
+  - **Head**: Helmets, hats, crowns
+  - **Torso**: Chestplates, robes, shirts
+  - **Arms**: Gloves, gauntlets, bracers
+  - **Legs**: Leggings, pants, leg armor
+  - **Feet**: Boots, shoes, sandals
+  - **Left Hand**: Shields, torches, off-hand items
+  - **Wearable**: Necklaces, amulets, accessories
+- **Visual Layout**: Two-row layout in player inventory UI (4 slots top row, 3 slots bottom row)
+- **Character Enhancement**: Equipment provides stat bonuses and visual changes
+- **Future Expansion**: System designed to support equipment effects and visual customization
 
 ### **Inventory Controls**
 - **Selection**: `1-9` keys select inventory slots
@@ -624,6 +702,60 @@ Trader interactions display score-based messages from popular RPG games:
 
 ## 🎮 **User Interface System**
 
+### **Enhanced Inventory UI System (December 2024)**
+
+#### **Player Inventory UI Layout Redesign**
+The player inventory UI has been completely redesigned for optimal space utilization and user experience:
+
+- **Left Side (50% width)**: Player inventory with 3×3 grid layout for 9 items
+- **Right Side (50% width)**: Character view with armor slots and animated player sprite
+- **Armor Slot Layout**: Three-column arrangement positioned to the left of player sprite:
+  - **Column 1**: head, torso, legs, feet (4 vertical slots)
+  - **Column 2**: left_hand, arms (right_hand), wearable (3 vertical slots, aligned at top)
+  - **Column 3**: (reserved for future expansion)
+- **Player Sprite Animation**: Continuously animated walking down sprite (4-frame cycle, 800ms duration)
+  - **Sprite Source**: Uses RedDemon.png to match the actual player character sprite
+  - **Continuous Animation**: Updates regardless of game state for dynamic character display
+- **Height-Aware Sizing**: Slot sizes calculated based on both width AND height constraints to prevent overflow
+- **Minimum Slot Size**: 30px minimum ensures slots remain usable on smaller screens
+
+#### **Enhanced Navigation System**
+- **Arrow Key Navigation**: Full 4-directional navigation between inventory grid and armor slots
+- **Cross-Section Movement**: Seamless navigation from 3×3 inventory grid to armor slots and vice versa
+- **Grid-Based Logic**: Smart navigation using row/column calculations for intuitive movement
+- **Wrap-Around Behavior**: Navigation wraps within sections for continuous movement
+- **Visual Feedback**: Selected slots highlighted with blue background and border
+
+#### **Trade Inventory UI Improvements**
+- **Dual-Container Layout**: Player inventory (left 50%) and chest/tombstone inventory (right 50%)
+- **3x3 Grid Layout**: Both player and container inventories use 3x3 (9 slot) grids
+- **4-Directional Navigation**: Up/down/left/right arrow keys for full grid navigation
+- **Height-Aware Sizing**: Same responsive sizing system as player inventory
+- **Bidirectional Transfers**: X key for selected item, Z key for all items
+- **Mode Switching**: Left/right arrows switch between player and container inventories
+
+### **Atomic OOP Architecture & Game Loop Optimization**
+
+#### **InputSystem Implementation**
+- **Centralized Input Processing**: Single system handles all input with action queue architecture
+- **Priority-Based Processing**: ESC key processed first, then UI-specific inputs, then game inputs
+- **Action Interface**: Structured InputAction objects with type, direction, key, and data fields
+- **UI Context Awareness**: Different input handling for player inventory, chest, menu, and textbox UIs
+- **Clean Separation**: Input processing completely separated from action execution
+
+#### **ActionSystem Implementation**
+- **Atomic Action Processing**: Each action processed independently with proper error handling
+- **Single Responsibility**: Dedicated methods for attack, interact, UI navigation, and menu actions
+- **Environment-Aware**: Automatic switching between world and dungeon action handling
+- **Type-Safe Actions**: Strongly typed action system with TypeScript interfaces
+- **Modular Design**: Easy to extend with new action types and behaviors
+
+#### **Game Loop Optimization**
+- **UI-Aware Updates**: Game logic pauses when UI is visible, but animations continue
+- **Continuous UI Animations**: Player sprite and UI animations update regardless of game state
+- **Efficient Input Processing**: Input actions processed before game logic updates
+- **Clean State Management**: Proper separation between UI state and game state
+
 ### **Bubble-Style UI Design**
 The game features a modern bubble-style UI with white backgrounds and rounded borders inspired by contemporary mobile interfaces:
 
@@ -679,31 +811,111 @@ The game implements a sophisticated responsive layout system that adapts to diff
   - **Dynamic Resizing**: UI components automatically adjust to canvas size changes
   - **Consistent Centering**: Both UI overlays use identical horizontal centering logic
 
-#### **Tombstone UI System**
-- **Style**: Bubble design matching overall UI aesthetic
-- **Layout**: 3×3 grid layout for tombstone inventory display
-- **Entity Identification**: Title shows deceased entity name (e.g., "Player's Tombstone")
-- **Visual Feedback**: Selected slot highlighted with blue border
-- **Navigation**: Use `Left/Right` arrow keys to navigate slots
-- **Item Actions**: `Z` for take all, `X` for take selected
+#### **Player Inventory UI System** (Primary) - Updated December 2024
+- **Style**: Full-width bubble design with modern responsive layout
+- **Layout**: Split-screen design with inventory management (left 50%) and character view (right 50%)
+- **Left Side - Player Inventory**:
+  - **3×3 Inventory Grid**: Items arranged in organized grid at top of left section
+  - **Height-Aware Sizing**: Slots sized to fit available height without overflow
+  - **Responsive Width**: Fills 50% of container width with optimal slot sizing
+  - **No Armor Slots**: Armor slots moved to right side for better organization
+- **Right Side - Character View with Armor Slots**:
+  - **Player Name**: Displays character name at top
+  - **Armor Slot Layout**: Two-column arrangement to left of player sprite:
+    - **Column 1**: head, torso, legs, feet (4 slots vertically)
+    - **Column 2**: left_hand, wearable, arms (3 slots vertically)
+  - **Animated Player Sprite**: Continuously animated walking down sprite (4-frame cycle, 800ms)
+  - **Minimum Sprite Size**: 32px minimum ensures visibility on all screen sizes
+  - **Debug Support**: Placeholder shown if sprite fails to load
+
+#### **Player Inventory UI Navigation** - Enhanced December 2024
+- **Natural Directional Navigation**: Arrow keys follow visual layout directions
+  - **Left/Right**: Navigate between left inventory grid and right armor slots
+  - **Up/Down**: Navigate within sections (inventory grid or armor columns)
+- **Visual Direction Mapping**:
+  - **Right Arrow**: From inventory grid moves to corresponding armor slots
+  - **Left Arrow**: From armor slots returns to corresponding inventory positions
+- **Grid-Based Movement**: Intelligent navigation using row/column calculations
+- **Cross-Section Navigation**: Seamless movement between inventory grid and armor slots
+- **Position Preservation**: When switching sections, maintains relative row/column position
+- **Visual Feedback**: Selected slot highlighted with blue background and border
+- **Slot Layout**:
+  - **Inventory Slots**: 0-8 (3×3 grid on left side)
+  - **Armor Slots**: 9-15 (three-column layout on right side)
+    - **Column 1**: 9-12 (head, torso, legs, feet)
+    - **Column 2**: 13-15 (left_hand, arms/right_hand, wearable)
+- **Navigation Logic**:
+  - **Within Inventory**: Standard 3×3 grid navigation with wrap-around
+  - **Within Armor**: Three-column navigation with vertical movement in each column
+  - **Between Sections**: Left/right arrows move between inventory and armor areas naturally
+- **Full-Width Container**: Uses entire canvas width when open (hides right-side inventory panel)
+- **Activation**: Press `E` key to toggle player inventory UI
+- **Close Options**: `E` key or `ESC` key to close interface
+- **Game Pause**: Game logic pauses while player inventory UI is displayed
+
+#### **Trade Inventory UI System** (Chests & Tombstones) - Enhanced December 2024
+- **Style**: Full-width bubble design with responsive layout
+- **Layout**: Split-screen design with player inventory (left 50%) and container inventory (right 50%)
+- **Player Side**: Shows all 9 player inventory slots in 3×3 grid
+- **Container Side**: Shows chest/tombstone inventory in 3×3 grid with entity name
+- **Height-Aware Sizing**: Slots sized based on both width and height constraints (minimum 30px)
+- **Seamless Grid Navigation**: Arrow keys provide intuitive movement similar to player inventory UI
+  - **Up/Down**: Navigate within current 3×3 grid with wrap-around (same as player inventory)
+  - **Left/Right**: Seamless movement between player and container grids
+    - **From Player Right Edge**: Moves to corresponding row in container (leftmost column)
+    - **From Container Left Edge**: Moves to corresponding row in player (rightmost column)
+    - **Within Grid**: Normal horizontal movement with wrap-around at edges
+  - **Position Mapping**: Maintains row correspondence when switching between grids
+- **Position Preservation**: When switching sides, maintains relative grid position
+- **Grid Navigation**: Proper 3×3 grid movement with row/column calculations
+- **Item Transfer**:
+  - `X` key transfers currently selected item to opposite inventory
+  - `Z` key transfers all items from current inventory to opposite
+- **Visual Feedback**: Selected inventory side and slot highlighted with blue borders
+- **Mode Indicators**: Clear visual indication of which inventory is currently selected
+- **Bidirectional**: Items can move from player to container and vice versa
+- **Persistent Storage**: Container inventories saved in tile cache data
+- **Full-Width Container**: Uses entire canvas width when open (hides right-side inventory panel)
 - **Close Options**: `F` key or `ESC` key to close interface
-- **Game Pause**: Game logic pauses while tombstone UI is displayed
+- **Game Pause**: Game logic pauses while trade inventory UI is displayed
+
+#### **Selectable Inventory Panel** (Right-Side)
+- **Style**: Vertical column of 9 inventory slots on right side of canvas
+- **Visibility**: Hidden when any inventory UI component is visible
+- **Selection**: Number keys 1-9 select inventory slots
+- **Mouse Interaction**: Click slots to select items
+- **Visual Feedback**: Selected slot highlighted with blue border
+- **Purpose**: Quick access to inventory items during gameplay
+- **Auto-Hide**: Automatically hidden when player inventory, trade inventory, chest, or tombstone UI is open
 
 #### **Console UI System**
 - **Style**: Black background containers with white text for high contrast visibility
 - **Positioning**: Bottom-left corner of the canvas with 10px padding
-- **Layout**: Vertical stack with newest entries at the bottom, older entries moving up
-- **Entry Design**: Each log entry has its own black bubble container sized to text width
+- **Layout**: Vertical stack with persistent information entries
+- **Entry Design**: Each info line has its own black bubble container sized to text width
 - **Text Styling**: White text using pixel font (Press Start 2P) or Arial fallback
 - **Auto-Sizing**: Container width automatically adjusts to text content (max 400px)
-- **Entry Management**: Displays up to 10 most recent log entries, automatically removes oldest
-- **Real-Time Updates**: Logs player position and nearest structures on every tile movement
-- **Content Types**:
-  - **Player Position**: Current tile coordinates (e.g., "Player: (15, -23)")
-  - **Nearest Village Well**: Closest water well coordinates (e.g., "Nearest Well: (20, -30)")
-  - **Nearest Dungeon Entrance**: Closest dungeon entrance coordinates (e.g., "Nearest Dungeon: (45, 12)")
+- **Persistent Information Display**: Always shows current game state information:
+  - **Player Position**: Current tile coordinates (e.g., "Player Position: 15, -23")
+  - **Nearest Village Well Position**: Closest water well coordinates or "NOT FOUND"
+  - **Nearest Mine Entrance Position**: Closest mine entrance coordinates or "NOT FOUND"
+  - **Nearest Dungeon Entrance Position**: Closest dungeon entrance coordinates or "NOT FOUND"
+  - **Nearest Portal Position**: Portal coordinates when in dungeon mode or "NOT FOUND"
+- **Real-Time Updates**: Information refreshes when player moves to new tile coordinates
 - **Search Algorithm**: Uses expanding radius search up to 100 tiles for efficient structure detection
-- **Performance**: Only searches when player moves to new tile, not on every frame
+- **Mode-Aware Display**: Portal position only shown when in dungeon rendering mode
+
+#### **Menu System**
+- **Activation**: Press `ESC` key to open game menu when no other UI is active
+- **Style**: Centered bubble design with rounded corners and modern styling
+- **Options**:
+  - **Back to Game**: Returns to gameplay (also accessible via ESC)
+  - **Save Game**: Saves current game state to localStorage
+- **Navigation**: Use `Up/Down` arrow keys to select options, `Enter` to confirm
+- **Game Pause**: Game logic pauses while menu is visible
+- **Save Confirmation**: Shows success/error message after save attempt
+- **Data Storage**: Saves player position, health, inventory, and world timestamp
+- **Load System**: Basic save detection (full loading not yet implemented)
 
 ### **Notice Board System**
 A comprehensive village information system that provides lore and character to settlements:
@@ -743,15 +955,42 @@ A comprehensive village information system that provides lore and character to s
 - **Contextual Messages**: References village features like wells, markets, and animals
 - **Interactive Elements**: Clear visual feedback and user-friendly controls
 
+### **UI Component Architecture**
+
+#### **Main UI Structure**
+The game implements a hierarchical UI system with the following components:
+
+**Primary UI Container (`ui/`)**:
+- **Inventory Container** (`inventory/`): Main inventory management system
+  - **Player Inventory**: Full-featured inventory with character view and armor slots
+  - **Trade Inventory**: Dual-container system for chest/tombstone interactions
+- **TextBox Container**: Bubble-style message display with responsive layout
+- **Selectable Inventory Panel**: Right-side quick-access inventory slots
+
+#### **Inventory System Hierarchy**
+```
+ui/
+├── inventory/ (inventory container)
+│   ├── player-inventory/ (player inventory items, armor slots, sprite view)
+│   └── trade-inventory/ (reusable container for player ↔ NPC/storage interactions)
+├── textbox/ (textbox container with title, content, dismissal instructions)
+└── selectable-inventory/ (right-side panel, hidden when other inventory UI visible)
+```
+
+#### **Character & Equipment System**
+- **Player Character Data**: Name, sprite, and equipment tracking
+- **Armor Slots**: 7 equipment slots (head, torso, arms, legs, feet, left_hand, wearable)
+- **Character Sprite**: Scalable player sprite rendering with facing direction
+- **Future Expansion**: System designed to support viewing NPCs and other players
+
 ### **UI Integration with Game Systems**
 - **Inventory Sync**: Real-time updates when items are collected or used
 - **Player Movement Detection**: Text boxes auto-dismiss on player movement
 - **Key Handling**: Comprehensive input system for UI interaction
 - **Canvas Rendering**: High-performance rendering with proper layering
 - **Responsive Design**: UI adapts to different screen sizes and resolutions
-- **Shared Layout System**: Centralized dimension calculation for consistent UI positioning
-- **Dynamic Width Matching**: Text box and inventory UI maintain identical widths automatically
-- **Height Synchronization**: Inventory UI overlay matches inventory panel height precisely
+- **Full-Width Layouts**: Inventory containers use entire canvas width for optimal space utilization
+- **Auto-Hide System**: Right-side inventory panel automatically hidden when full UI components are open
 - **Layout Coordination**: All UI components use shared responsive calculation methods
 - **Console Integration**: Real-time logging system with automatic position tracking and structure detection
 - **Movement Logging**: Console UI automatically logs player position and nearest important structures
@@ -1040,300 +1279,317 @@ Trader NPCs implement specialized flocking AI distinct from animal behavior:
 - **Interact**: `F` key - Interact with POIs and structures
   - **Notice Boards**: Displays village information in bubble-style text box
   - **Water Wells**: Restores 25 health points
-  - **Trader NPCs**: Triggers RPG dialogue system with score-based responses
+  - **Trader NPCs**: Triggers merchant-specific greetings and phrases
+  - **Animals**: Shows animal sounds and noises
+  - **Monsters**: Displays monster grunts and famous quotes
   - **Tombstones**: Opens tombstone inventory UI for item retrieval
   - **Dungeon Entrances**: Switches camera to dungeon rendering mode
   - **Dungeon Portals**: Returns camera to surface world rendering mode
+  - **Rare Chests**: Opens dual inventory UI for item management
   - **Other POIs**: Various context-specific interactions
 
-### **Tombstone Interaction Controls**
-- **Open Tombstone**: `F` key while facing a tombstone
-- **Navigate Items**: `Left/Right` arrow keys to select different inventory slots
-- **Take Selected Item**: `X` key to take only the currently selected item
-- **Take All Items**: `Z` key to transfer all tombstone items to player inventory
-- **Close Tombstone**: `F` key to close the tombstone inventory interface
-- **Emergency Close**: `ESC` key to immediately close tombstone UI
+### **Inventory & Menu Controls**
 
-### **Inventory Controls**
-- **Slot Selection**: `1-9` keys select inventory slots
-- **Mouse Selection**: Click inventory slots to select items
-- **Open Inventory**: `E` key displays full inventory state
-- **Close Inventory**: `E` key or `ESC` key to close inventory UI
-- **Emergency Close**: `ESC` key to immediately close inventory UI
+#### **Primary Inventory Controls**
+- **Open Player Inventory**: `E` key opens full-featured player inventory UI with character view and armor slots
+- **Close Player Inventory**: `E` key or `ESC` key to close player inventory UI
+- **Arrow Key Navigation**: `Up/Down/Left/Right` arrow keys navigate between inventory and armor slots when player inventory UI is open
+- **Quick Slot Selection**: `1-9` keys select inventory slots (when right-side panel visible)
+- **Mouse Selection**: Click inventory slots to select items (when right-side panel visible)
+- **Menu System**: `ESC` key opens game menu with save/load options
+- **Menu Navigation**: `Up/Down` arrow keys, `Enter` to select, `ESC` to close
+
+#### **Trade Inventory System** (Chests & Tombstones)
+- **Auto-Open**: Trade inventory UI automatically opens when interacting with chests/tombstones
+- **Navigation**: Seamless grid-to-grid movement like player inventory UI
+  - `Up/Down` arrow keys navigate within current 3×3 grid with wrap-around
+  - `Left/Right` arrow keys provide seamless cross-grid movement:
+    - **Within Grid**: Normal horizontal movement with wrap-around at edges
+    - **Cross-Grid**: From rightmost player slot → leftmost container slot (same row)
+    - **Cross-Grid**: From leftmost container slot → rightmost player slot (same row)
+  - **Row Preservation**: Maintains row position when switching between grids
+- **Transfer Selected**: `X` key transfers currently selected item between inventories
+- **Transfer All**: `Z` key transfers all items from current inventory to opposite
+- **Close Interface**: `F` key or `ESC` key closes trade inventory UI
+- **Bidirectional**: Items can move from player to container and vice versa
+
+#### **Inventory Panel Behavior**
+- **Auto-Hide**: Right-side inventory panel automatically hidden when any full inventory UI is open
+- **Quick Access**: Right-side panel provides quick inventory access during gameplay
+- **Full-Width Mode**: Player and trade inventory UIs use entire canvas width for optimal space
 
 ### **UI Controls**
 - **Close Any UI**: `ESC` key - Universal close key for all UI components
-  - **Text Box**: Closes village notice board text displays
-  - **Inventory UI**: Closes detailed inventory interface
-  - **Tombstone UI**: Closes tombstone interaction interface
 - **Movement Restriction**: Arrow keys disabled when inventory UI is open
 - **Game Pause**: Game logic pauses when any UI component is open
 
-### **Mouse Controls**
-- **Camera Drag**: Click and drag to move camera view
-- **Inventory Interaction**: Click inventory slots to select items (currently disabled - keyboard only)
-- **Click Detection**: Distinguishes between clicks and drags (< 5 pixel threshold)
-- **Future Implementation**: Mouse controls for game world interactions planned
+## 🌐 **Translation & Interaction System**
 
-### **Console Logging**
-- **Key Operations**: Shows meaningful key mappings (e.g., "q → attack")
-- **Tile Information**: Current tile and facing tile with structure details
-- **Inventory Changes**: Real-time inventory updates
-- **Combat Feedback**: Attack results and damage dealt
-- **Village Generation**: Logs when villages, markets, and NPCs are created
+### **Structured Translation Files**
+The game features a comprehensive translation system organized by entity type:
 
-## 🎨 **Visual System**
+#### **Animal Translations** (`src/game/translations/animals.ts`)
+- **Chicken Sounds**: "Cluck cluck!", "Bawk bawk bawk!", "*happy chicken noises*"
+- **Pig Sounds**: "Oink oink!", "Snort snort!", "*rolls in mud*"
+- **Sheep Sounds**: "Baa baa!", "*gentle bleating*", "*peaceful grazing*"
+- **Interactive Feedback**: Press F near animals to hear random sounds
 
-### **Rendering Order**
-1. **Black Background**: Canvas filled with black (#000000) for tile borders
-2. **Base Color Layer**: 14x14 colored squares representing tile types
-3. **Background Sprite Layer**: TexturedGrass.png variants for GRASS and FOREST, Shore.png textures
-4. **Player**: Red 10x10 square at screen center (renders behind entities)
-5. **Occupied Entity Layer**: Structures and NPCs on tiles
-   - Tree Sprites: 16x16 tree sprites with growth animations
-   - Cactus Sprites: 16x16 cactus sprites with variant animations
-   - POI Buildings: Wells, markets, windmills, chests, notice boards (static/animated)
-   - NPC Animals: Walking animals with directional animations
-6. **Bubble UI Layer**: Modern interface elements (front-most layer)
-   - **Inventory UI**: Right-side bubble slots with rounded corners and shadows
-   - **Text Box UI**: Bottom-screen bubble with village information and lore
-   - **Interactive Elements**: Selection highlighting and visual feedback
+#### **Monster Translations** (`src/game/translations/monsters.ts`)
+- **Orc Quotes**: "Lok'tar!", "Zug zug!", "For the Horde!", "Blood and thunder!"
+- **Goblin Sounds**: "Grr!", "Hehehe!", "*goblin cackle*", "Mine! Mine!"
+- **Skeleton Sounds**: "*bone rattling*", "*eerie silence*", "*haunting moan*"
+- **Specialized Types**: Each monster variant has unique sound sets
+- **Famous Game References**: Includes authentic Warcraft, D&D, and fantasy quotes
 
-### **Animation System**
-- **Windmill Animation**: 3-frame animation (frames 3, 4, 5) with 2-second cycle
-- **Animal Walking**: 4-frame directional animation (frames 0-3) with 1-second cycle
-- **Wheat Growth**: 4-stage animated growth cycle
-- **Fire Effects**: 2-frame animation for fireball and magic fire
-- **Frame-Based Rendering**: Proper sprite sheet indexing with animation state
-- **Game Loop Integration**: Animations updated every frame via deltaTime
+#### **Trader Translations** (`src/game/translations/traders.ts`)
+- **Axeman Trader**: "Sharp axes for sale!", "Wood you like to buy something?"
+- **Swordsman Trader**: "Fine blades for warriors!", "Steel yourself for adventure!"
+- **Spearman Trader**: "Long reach, fair prices!", "Spear-it of adventure!"
+- **Farmer Trader**: "Fresh from the farm!", "Harvest the best deals!"
+- **Dynamic Greetings**: Random selection from merchant-specific phrase sets
 
-### **Sprite System**
-- **Size**: 16x16 pixels per sprite
-- **Format**: Sprite sheets with frame indexing
-- **Animation**: Time-based frame progression with configurable durations
-- **Alignment**: Sprites align perfectly with tile grid
-- **Depth**: Player renders behind structures for proper depth
+#### **Village Translations** (`src/game/translations/villages.ts`)
+- **Welcome Messages**: "Welcome to our peaceful village!", "Greetings, weary traveler!"
+- **Descriptions**: "Our village thrives through hard work and community spirit."
+- **Closing Messages**: "May your stay be pleasant and your journey safe."
+- **Dynamic Generation**: Notice boards show randomly combined welcome + description + closing
 
-### **Border System**
-- **Style**: 1px black borders around all tiles
-- **Method**: Tile rendering leaves 1px gaps, black background shows through
-- **Performance**: Zero-cost border rendering
-
-## 🎯 **Game Objectives & Gameplay**
-
-Currently a **survival/resource gathering game** with:
-
-### **Core Gameplay Loop**
-1. **Exploration**: Navigate different biomes and discover structures
-2. **Resource Gathering**: Attack trees and cactus to collect materials
-3. **Inventory Management**: Organize collected items in 9-slot inventory
-4. **Environmental Interaction**: Observe tile regeneration and structure growth
-5. **Village Discovery**: Find rare villages with animated windmills and NPCs
-6. **POI Interaction**: Use chests, wells, markets, and other structures
-
-### **Resource Management**
-- **Wood Collection**: Attack trees to gather wood
-- **Cactus Harvesting**: Destroy cactus for cactus items
-- **Inventory Organization**: Use number keys to manage 9 inventory slots
-- **Stack Optimization**: Items automatically stack to save space
-
-### **Environmental Systems**
-- **Dynamic World**: Structures grow over time
-- **Tile Recovery**: DIRT tiles regenerate to GRASS after 30 seconds
-- **Persistent Changes**: Destroyed structures leave environmental impact
-- **Living Villages**: Animated windmills and walking animals create vibrant settlements
-
-## 🔧 **Technical Implementation**
-
-### **Environmental Damage System**
-- **Cactus Damage**: 5 damage per frame to any entity standing on living cactus tiles
-- **Damage Radius**: 20-tile radius checking around player for performance optimization
-- **Entity Filtering**: Only damages living entities (health > 0)
-- **Logging**: Console feedback for all damage events and entity deaths
-- **Real-Time Processing**: Damage applied every frame during game update cycle
-
-### **Tile-Based Movement System**
-- **Movement Cooldown**: 1.2-second delay between moves (slowed down for realistic animal behavior)
-- **Movement Logic**: NPCs choose one adjacent tile based on current state:
-  - **Following**: Move towards player (when has wheat)
-  - **Fleeing**: Move away from player/monsters (when damaged)
-  - **Attacking**: Move towards player (monsters only)
-  - **Wandering**: Random adjacent tile (default state)
-- **Collision Detection**: NPCs check for occupied tiles and avoid other NPCs
-- **Boundary Enforcement**: 5-tile wandering radius, 10-tile maximum from spawn
-- **Tile Selection**: Prioritizes movement based on direction with largest distance component
-- **Performance**: NPCs updated within 35-tile radius of player (matches camera view)
-
-### **Chunk-Based Entity Management**
-- **NPC Tracking**: Each chunk maintains a map of NPCs by tile coordinates
-- **Cross-Chunk Movement**: NPCs can move between chunks with proper state transfer
-- **Collision Detection**: Real-time tile occupancy checking prevents entity overlap
-- **Entity Registration**: NPCs automatically registered in chunk system during village generation
-- **Memory Efficiency**: Only loaded chunks track entity positions
-
-### **Seed-Based Generation**
-- **Deterministic World**: Same seed always generates identical worlds
-- **Multiple Noise Maps**: Separate noise functions for villages, animals, mines
-- **Noise Scaling**: Different frequency scales for different feature types
-- **Hash Function**: Converts string seeds to numeric values for noise generation
-- **Structure Persistence**: Generated structures stored in world state
-
-### **Animation Architecture**
-- **POI Animation**: 2-second cycles for windmills, configurable frame sequences
-- **NPC Animation**: 1-second cycles for animals, directional sprite sheets
-- **Game Loop Integration**: Animations updated via deltaTime in world update
-- **Performance Optimization**: Only visible tiles updated for animations
-- **Frame Management**: Proper frame indexing and timing systems
-
-### **Village Structure System**
-- **Two-Pass Generation**: First pass generates tiles, second pass distributes structures
-- **Priority-Based Placement**: POI structures placed before NPCs to avoid conflicts
-- **Collision Detection**: Ensures only one structure per tile
-- **Terrain Validation**: Real-time tile type checking during placement
-- **Well-Centered Layout**: All village structures positioned relative to central water well
-- **Random Distribution**: Deterministic randomization for natural village layouts
-
-### **Game State**
-```typescript
-{
-  player: {
-    position: { x: number, y: number },
-    inventory: InventoryItem[],
-    health: number,
-    attackDamage: number
-  },
-  world: {
-    tiles: Tile[],
-    villageStructures: VillageStructure[],
-    npcs: NPC[],
-    pois: POI[]
-  },
-  scoreSystem: {
-    villageScores: Map<string, VillageScore>,
-    rpgComments: RPGComment[]
-  }
-}
-```
-
-### **Player Entity**
-- **Attack Damage**: 5 points
-- **Health**: 100 HP
-- **Direction Tracking**: Maintains facing direction for combat
-- **Inventory Integration**: Direct access to 9-slot inventory system
-
-### **Performance Optimization**
-- **Visibility Culling**: Only render visible tiles and structures
-- **Tile Caching**: Cache visible tiles to avoid recalculation
-- **Change Detection**: Only update when camera/player moves
-- **Animation System**: Efficient structure rendering and updates
-- **Chunk-Based Loading**: 16x16 tile chunks for efficient world streaming
-- **Camera-Based NPC Updates**: NPCs only updated within camera view + 5-tile buffer (adaptive to screen resolution)
-- **Dynamic View Radius**: Update radius calculated from camera dimensions (canvas width/height in tiles)
-
-### **Game Loop**
-- **Target FPS**: 60 FPS
-- **Fixed Timestep**: Consistent 16.67ms updates
-- **Delta Time**: Proper time-based calculations for animations
-- **Update Throttling**: Expensive operations only when needed
-- **Animation Updates**: Smooth frame transitions using game loop timing
-- **UI Pause System**: Game logic automatically pauses when any UI component is open
-  - **Paused Elements**: World updates, NPC movement, animation systems, entity deaths
-  - **Active Elements**: Player animation, control input handling, UI rendering
-  - **Resume Behavior**: Game resumes immediately when all UI components are closed
-- **Console Logging System**: Real-time position tracking and structure detection
-  - **Movement Triggers**: Console logs update only when player moves to new tile coordinates
-  - **Efficient Search**: Expanding radius algorithm finds nearest structures within 100-tile range
-  - **Log Management**: Automatic cleanup maintains 10 most recent entries for performance
-
-### **Anti-Clustering System**
-- **Multi-Layer Validation**: Three-tier spacing enforcement (VillageGenerator, WorldGenerator, Chunk.ts)
-- **2-Tile Minimum Radius**: Animals require at least 2 empty tiles around them
-- **Adequate Movement Space**: Minimum 3 passable adjacent tiles for animal mobility
-- **Spawn Rejection Logging**: Console feedback for blocked spawn attempts
-- **Real-Time Validation**: Dynamic spacing checks during NPC addition to chunks
-
-### **Species Grouping System**
-- **Same-Type Attraction**: Animals are more likely to spawn near others of their species
-- **Detection Radius**: 4-tile radius check for nearby animals of the same type
-- **Grouping Bonus**: 3x higher spawn probability for same species when nearby animals detected
-- **Natural Herds**: Creates realistic animal clustering (pig herds, chicken flocks, sheep groups)
-- **Balanced Randomness**: Still allows diverse spawning while encouraging species grouping
-- **Applied to All Animals**: Both village and wild animals use species-preference logic
-
-### **Dynamic Cluster Behavior**
-- **Personal Space Mechanism**: Animals escape when surrounded by 3+ same-type animals within 2 tiles
-- **Crowded Repulsion**: 40% chance to move away from cluster center when feeling crowded
-- **Clustered Movement Boost**: Animals near others have 90% movement chance (vs 80% isolated)
-- **Enhanced Avoidance**: 30% chance to move away from nearby animals when clustered (vs 20% isolated)
-- **Boosted Exploration**: 35% chance for exploration when clustered (vs 25% isolated)
-- **Restlessness System**: Movement probability increases by up to 30% after 3+ seconds of inactivity
-- **Reduced Attraction Penalties**: Less severe attraction reduction when near same-type animals
-- **Distance-Based Attraction**: Attraction strength decreases when already near other same-type animals
-- **Isolation Response**: Isolated animals have 50% higher attraction to find their species
-- **Dynamic Attraction Rates**: 10-40% attraction chance based on local population density
-- **Edge Liberation**: Animals on cluster edges can now move outward for exploration
-- **Adjacent Movement Allowed**: Animals can move next to each other, only avoiding overcrowded situations
-
-### **Advanced Movement Coordination System**
-
-#### **Two-Phase Movement Algorithm**
-Both world and dungeon systems implement sophisticated movement coordination to prevent NPC clustering and deadlocks:
-
-**Phase 1: Intention Collection**
-- All NPCs within update radius declare their intended movement targets
-- Movement intentions registered globally before any actual movement occurs
-- System builds map of target tiles and which NPCs want to move there
-
-**Phase 2: Coordinated Execution**
-- NPCs execute movements with full knowledge of other NPCs' intentions
-- Speculative movement allows position swapping and chain movements
-- Deadlock resolution through coordinated group movement
-
-#### **Movement Intention System**
-- **getMovementIntention()**: NPCs calculate target positions without actually moving
-- **Intention Caching**: Movement decisions cached for 100ms to ensure consistency
-- **Deterministic Behavior**: Same NPC always makes same decision given same conditions
-- **Global Coordination**: All NPCs in area share movement intentions for coordination
-
-#### **Speculative Movement & Deadlock Resolution**
-- **Position Swapping**: Two NPCs wanting each other's tiles can swap positions
-- **Chain Movement**: If NPC A wants to move away, NPC B can take A's position
-- **Bidirectional Coordination**: System detects mutual movement desires
-- **Escape Mechanisms**: Long-stuck NPCs (8+ seconds) get enhanced randomness to break deadlocks
-
-#### **Collision Callbacks & Coordination**
-- **setTileCollisionCallback()**: Each NPC gets tile-specific collision detection
-- **setSpeculativeMovementCallback()**: Enables coordination with other NPCs
-- **Context-Aware Collision**: Different collision rules for world vs dungeon modes
-- **Dynamic Tile Creation**: Dungeon NPCs can create passable tiles when needed
-
-#### **Performance Optimization**
-- **Radius-Based Updates**: Only NPCs within view radius + buffer are updated
-- **Intention Sharing**: All NPCs share intentions but only nearby ones execute
-- **Cache Efficiency**: Movement decisions cached to avoid recalculation
-- **Staggered Processing**: NPCs have random initial delays to prevent synchronization
-
-### **Enhanced Collision Detection System**
-- **Mode-Aware Collision**: Different collision rules for world vs dungeon rendering modes
-- **Dynamic Context Switching**: Movement system automatically adapts to current camera rendering mode
-- **Callback-Based Architecture**: NPCs use collision callbacks for tile-specific movement validation
-- **Speculative Movement**: Advanced coordination system allows NPCs to negotiate position swaps
-- **Isolated Systems**: World and dungeon collision systems completely separate to prevent interference
-
-### **Advanced Movement Intention Architecture**
-- **Two-Phase Processing**: Intention collection phase followed by coordinated execution phase
-- **Global Intention Map**: Shared data structure tracking all NPC movement desires
-- **Deterministic Caching**: Movement decisions cached for 100ms to ensure execution matches intention
-- **Deadlock Prevention**: Multiple escape mechanisms for stuck NPCs including increased randomness
-- **Cross-System Implementation**: Same algorithm used in both world and dungeon systems
-
-### **Dungeon System Enhancements**
-- **Dynamic Tile Generation**: NPCs can create passable STONE tiles when moving into VOID areas
-- **Cache Synchronization**: Dungeon chunk cache automatically updates when NPCs modify tile data
-- **Enhanced Tunnel Generation**: Expanded passable areas with rooms, corridors, and connecting paths
-- **Isolated Rendering**: Complete separation of world and dungeon content during rendering
-- **Fresh Generation**: Dungeon caches cleared when entering new dungeons for consistent experience
+### **Enhanced Entity Interactions**
+- **Context-Aware Responses**: Each entity type uses appropriate translation system
+- **Random Selection**: Multiple phrases per entity prevent repetitive interactions
+- **Immersive Feedback**: Sounds and quotes enhance world atmosphere
+- **Cultural References**: Includes authentic quotes from popular fantasy games
 
 ---
 
-*This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system, sophisticated combat mechanics with blocking systems, village-based reputation system with RPG dialogue, advanced monster flocking algorithms with two-phase movement coordination, enhanced dungeon systems with expanded NPC movement spaces, trader generation with defensive combat capabilities, dungeon monster spawning, environmental interactions with priority-based structure placement, modern bubble-style UI system inspired by contemporary mobile and handheld gaming interfaces, and comprehensive movement intention systems that prevent NPC deadlocks through speculative movement and position swapping. The enhanced dungeon system provides substantially more movement space for NPCs through expanded tunnel generation, room systems, and connecting corridors, while the advanced collision detection ensures smooth coordination between NPCs in both world and dungeon environments. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using sophisticated AI behaviors with auto-blocking trader defensive combat.*
+## 🆕 **Recent Updates (December 2024)**
+
+### **Major UI/UX Improvements**
+- **Redesigned Player Inventory UI**: Armor slots moved to right side in three-column layout alongside animated player sprite
+- **Corrected Inventory Layout**: Fixed player inventory to proper 3x3 (9 slots) grid as intended
+- **Player Sprite Consistency**: UI now uses RedDemon.png to match the actual player character sprite
+- **Height-Aware Slot Sizing**: Inventory slots now calculate size based on both width and height constraints to prevent overflow
+- **Natural Navigation System**: Arrow keys follow visual layout directions for intuitive movement
+  - **Player Inventory**: Left/right moves between inventory grid and armor slots, preserving position
+  - **Trade Inventory**: Left/right switches between player and container sides, maintaining grid position
+- **Enhanced Player Sprite**: Uses proper SwordsmanTemplate.png with continuous walking animation
+- **Improved Trade UI**: Natural directional navigation in chest/tombstone interfaces with position preservation
+
+### **Game Architecture Enhancements**
+- **Atomic OOP Structure**: New InputSystem and ActionSystem classes for clean separation of concerns
+- **Optimized Game Loop**: UI-aware updates with continuous animations while game logic pauses during UI display
+- **Type-Safe Actions**: Structured InputAction interface with proper TypeScript typing
+- **Modular Input Processing**: Priority-based input handling with context-aware UI processing
+
+### **Code Organization & Structure Improvements**
+- **Translations System Consolidation**: Moved all translation files to unified `src/game/translations/` directory
+  - **Portal Quotes**: Integrated portal discovery quotes into translations system
+  - **Entity Interactions**: Comprehensive translation system for animals, monsters, traders, villages, and UI
+  - **Removed Redundant Files**: Eliminated duplicate PortalQuotes.ts and empty data directory
+- **Atomic OOP Architecture**: Enhanced separation of concerns with dedicated system classes
+  - **InputSystem**: Centralized input processing with priority-based action queues
+  - **ActionSystem**: Atomic action handling with proper error boundaries
+  - **AnimationSystem**: Centralized entity animation management with performance optimization
+- **Dependency Management**: Improved system dependencies with cleaner interfaces
+  - **Reduced Circular Dependencies**: Better separation between UI, game logic, and rendering systems
+  - **Type Safety**: Enhanced TypeScript typing throughout the codebase
+  - **Service Layer**: Clear separation between data, business logic, and presentation layers
+
+### **System Architecture Optimizations**
+- **Entity Management**: Improved entity lifecycle management with proper cleanup
+  - **Chunk-Based Loading**: Efficient entity loading/unloading based on camera visibility
+  - **Animation System**: Centralized management of all animated entities (trees, cactus, NPCs)
+  - **Memory Management**: Proper entity cleanup when chunks are unloaded
+- **Performance Enhancements**:
+  - **Camera-Based Updates**: Only update entities within camera view + buffer zone
+  - **Efficient Collision Detection**: Optimized tile-based collision with spatial indexing
+  - **Reduced Console Logging**: Performance-optimized logging during world generation
+- **Modular Design Principles**:
+  - **Single Responsibility**: Each system class has a focused, well-defined purpose
+  - **Open/Closed Principle**: Systems extensible without modification of core classes
+  - **Dependency Inversion**: Systems depend on abstractions, not concrete implementations
+
+### **Dungeon System Improvements**
+- **Increased Monster Frequency**: 25% increase in monster spawn rates (60-85% noise threshold vs 70-85%)
+- **Enhanced Tunnel Generation**: Expanded tunnel width (0.5 vs 0.35 threshold) for better NPC movement
+- **Improved NPC Movement Space**: Extended branching, room systems, and connecting corridors
+- **Better Combat Encounters**: More frequent monster encounters throughout dungeon exploration
+
+### **Technical Optimizations**
+- **Responsive UI Calculations**: Dynamic slot sizing based on available space and minimum size constraints
+- **Performance Improvements**: Reduced console logging during generation for smoother gameplay
+- **Clean Code Architecture**: Better separation between UI state, game state, and input processing
+- **Enhanced Error Handling**: Proper fallbacks and debug support for sprite loading and UI rendering
+- **File Structure Optimization**: Consolidated related functionality and removed redundant code paths
+
+## 🏗️ **Current Architecture & Future Optimization Opportunities**
+
+### **Current System Architecture**
+The game follows a modular architecture with clear separation of concerns:
+
+#### **Core Systems**
+- **Game Engine** (`src/game/engine/`): Main game loop, state management, and core game logic
+- **World Management** (`src/game/world/`): Procedural world generation, chunk management, and dungeon systems
+- **Entity System** (`src/game/entities/`): Player, NPCs, structures, POIs, and inventory management
+- **UI System** (`src/game/ui/`): User interface components, inventory UIs, and visual feedback
+- **Input/Action Systems** (`src/game/systems/`): Input processing, movement, animation, and game actions
+- **Translation System** (`src/game/translations/`): Localized text and entity interaction messages
+- **Asset Management** (`src/game/assets/`): Sprite mapping, asset loading, and resource management
+
+#### **Current Design Patterns**
+- **Observer Pattern**: Camera and UI systems observe player state changes
+- **Strategy Pattern**: Different movement strategies for world vs dungeon environments
+- **Factory Pattern**: Entity creation through chunk generation and world systems
+- **Singleton Pattern**: Global systems like AnimationSystem and Camera
+- **Component Pattern**: Entities composed of position, health, inventory, and behavior components
+
+### **Identified Optimization Opportunities**
+
+#### **1. Entity Component System (ECS) Architecture**
+**Current State**: Entities use inheritance-based architecture with mixed responsibilities
+**Optimization**: Implement ECS pattern for better performance and maintainability
+```typescript
+// Proposed ECS Structure
+interface Component {}
+interface PositionComponent extends Component { x: number; y: number; }
+interface HealthComponent extends Component { health: number; maxHealth: number; }
+interface InventoryComponent extends Component { items: InventoryItem[]; }
+interface RenderComponent extends Component { sprite: Sprite; animation: AnimationData; }
+
+class Entity {
+  private components = new Map<ComponentType, Component>();
+  addComponent<T extends Component>(component: T): void;
+  getComponent<T extends Component>(type: ComponentType): T | null;
+}
+
+class System {
+  abstract update(entities: Entity[], deltaTime: number): void;
+}
+```
+
+#### **2. Service Locator Pattern**
+**Current State**: Direct dependencies between systems create tight coupling
+**Optimization**: Implement service locator for better dependency management
+```typescript
+class ServiceLocator {
+  private static services = new Map<string, any>();
+
+  static register<T>(name: string, service: T): void;
+  static get<T>(name: string): T;
+}
+
+// Usage
+ServiceLocator.register('worldGenerator', new WorldGenerator());
+ServiceLocator.register('animationSystem', new AnimationSystem());
+```
+
+#### **3. Command Pattern for Actions**
+**Current State**: Actions processed directly in ActionSystem
+**Optimization**: Implement command pattern for undo/redo and action queuing
+```typescript
+interface Command {
+  execute(): void;
+  undo(): void;
+}
+
+class MoveCommand implements Command {
+  constructor(private entity: Entity, private direction: Direction) {}
+  execute(): void { /* move logic */ }
+  undo(): void { /* reverse move */ }
+}
+
+class CommandManager {
+  private history: Command[] = [];
+  executeCommand(command: Command): void;
+  undo(): void;
+  redo(): void;
+}
+```
+
+#### **4. Object Pool Pattern**
+**Current State**: Entities created/destroyed frequently causing GC pressure
+**Optimization**: Implement object pooling for frequently created entities
+```typescript
+class EntityPool<T> {
+  private available: T[] = [];
+  private inUse = new Set<T>();
+
+  acquire(): T;
+  release(entity: T): void;
+  preAllocate(count: number): void;
+}
+```
+
+#### **5. State Machine for Entity Behavior**
+**Current State**: Entity behavior scattered across update methods
+**Optimization**: Implement state machines for cleaner behavior management
+```typescript
+interface State {
+  enter(entity: Entity): void;
+  update(entity: Entity, deltaTime: number): void;
+  exit(entity: Entity): void;
+}
+
+class StateMachine {
+  private currentState: State;
+  private states = new Map<string, State>();
+
+  transition(stateName: string): void;
+  update(entity: Entity, deltaTime: number): void;
+}
+```
+
+#### **6. Event System for Decoupled Communication**
+**Current State**: Direct method calls between systems create coupling
+**Optimization**: Implement event system for loose coupling
+```typescript
+interface GameEvent {
+  type: string;
+  data?: any;
+}
+
+class EventBus {
+  private listeners = new Map<string, Function[]>();
+
+  subscribe(eventType: string, callback: Function): void;
+  emit(event: GameEvent): void;
+  unsubscribe(eventType: string, callback: Function): void;
+}
+```
+
+### **Performance Optimization Recommendations**
+
+#### **1. Spatial Indexing**
+- Implement quadtree or spatial hash for efficient collision detection
+- Reduce O(n²) entity-to-entity checks to O(log n) or O(1)
+
+#### **2. Chunk-Based Entity Management**
+- Only update entities in active chunks (camera view + buffer)
+- Implement entity hibernation for distant chunks
+
+#### **3. Asset Streaming**
+- Lazy load sprites and assets based on camera proximity
+- Implement asset unloading for memory management
+
+#### **4. Batch Rendering**
+- Group similar sprites for batch rendering calls
+- Reduce canvas context state changes
+
+### **Maintainability Improvements**
+
+#### **1. Configuration System**
+- Centralize game constants and tuning parameters
+- Support runtime configuration changes for balancing
+
+#### **2. Plugin Architecture**
+- Modular system for adding new features
+- Hot-swappable components for development
+
+#### **3. Testing Framework**
+- Unit tests for core game logic
+- Integration tests for system interactions
+- Performance benchmarking suite
+
+---
+
+*This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system with redesigned full-width UI containers, enhanced equipment/armor slot management with two-column layout, and character viewing capabilities with continuously animated player sprites. The sophisticated combat mechanics include blocking systems, village-based reputation system with RPG dialogue, advanced monster flocking algorithms with two-phase movement coordination, enhanced dungeon systems with increased monster frequency and expanded NPC movement spaces, trader generation with defensive combat capabilities, dungeon monster spawning, environmental interactions with priority-based structure placement, modern bubble-style UI system with hierarchical component architecture inspired by contemporary mobile and handheld gaming interfaces, and comprehensive movement intention systems that prevent NPC deadlocks through speculative movement and position swapping. The enhanced inventory UI system provides optimal space utilization through height-aware slot sizing, armor slot management in a two-column layout, and trade inventory interfaces that use the full canvas width with 4-directional navigation, while automatically hiding the right-side inventory panel when full UI components are active. The enhanced dungeon system provides substantially more movement space for NPCs through expanded tunnel generation with increased width thresholds, room systems, and connecting corridors, while the advanced collision detection ensures smooth coordination between NPCs in both world and dungeon environments. The atomic OOP architecture with InputSystem and ActionSystem classes provides clean separation of concerns, type-safe action processing, and optimized game loop performance. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using sophisticated AI behaviors with auto-blocking trader defensive combat and increased encounter frequency.*

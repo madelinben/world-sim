@@ -18,14 +18,20 @@ export class Dungeon {
   private tunnelNoise: (x: number, y: number) => number;
   private monsterNoise: (x: number, y: number) => number;
   private chestNoise: (x: number, y: number) => number;
-  private readonly TUNNEL_THRESHOLD = 0.3; // Tunnel threshold for noise
-  private readonly MONSTER_THRESHOLD = 0.6; // Lowered monster spawn threshold for more spawns
-  private readonly CHEST_THRESHOLD = 0.95; // Chest spawn threshold (very rare)
+  private entityNoise: (x: number, y: number) => number; // High amplitude noise for entity placement
+    private readonly TUNNEL_THRESHOLD = 0.3; // Tunnel threshold for noise
   private readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
   private dungeonChunks = new Map<string, DungeonChunk>();
   private dungeonNames = new Map<string, string>(); // Cache dungeon names
   private currentEntrancePosition: Position | null = null; // Store current entrance position
   private portalGenerated = false; // Track if portal has been generated for this dungeon
+  private portalPosition: Position | null = null; // Store portal position for this dungeon
+  private chestCount = 0; // Track number of chests generated in current dungeon
+  private readonly MAX_CHESTS = 10; // Maximum chests per dungeon
+
+  // Track spawned entities for spacing during generation
+  private spawnedMonsters = new Set<string>(); // Track monster positions as "x,y"
+  private spawnedChests = new Set<string>(); // Track chest positions as "x,y"
 
   // Dungeon name generation data
   private readonly DUNGEON_PREFIXES = [
@@ -45,6 +51,7 @@ export class Dungeon {
     this.tunnelNoise = createNoise2D(() => hashSeed);
     this.monsterNoise = createNoise2D(() => hashSeed * 1.337);
     this.chestNoise = createNoise2D(() => hashSeed * 2.718);
+    this.entityNoise = createNoise2D(() => hashSeed * 3.141); // High amplitude noise for entity placement
   }
 
   private hashSeed(seed: string): number {
@@ -190,67 +197,169 @@ export class Dungeon {
     const entranceY = Math.floor(entrancePosition.y / this.TILE_SIZE);
     const distanceFromEntrance = Math.sqrt(Math.pow(worldX - entranceX, 2) + Math.pow(worldY - entranceY, 2));
 
-    // Generate only ONE portal at the furthest accessible point
-    if (!this.portalGenerated && distanceFromEntrance > 45 && distanceFromEntrance < 50 && Math.random() < 0.3) {
-      tile.villageStructures = tile.villageStructures ?? [];
-      tile.villageStructures.push({
+    // Check if this tile is the cached portal location
+    if (this.portalPosition) {
+      const portalTileX = Math.floor(this.portalPosition.x / this.TILE_SIZE);
+      const portalTileY = Math.floor(this.portalPosition.y / this.TILE_SIZE);
+
+      if (worldX === portalTileX && worldY === portalTileY) {
+        // This is the cached portal location - spawn the portal here
+        this.spawnPortal(tile, worldX, worldY, distanceFromEntrance);
+        return; // Don't add other features on portal tile
+      }
+    }
+
+    // Prevent entity spawning in exclusion zone around entrance
+    if (distanceFromEntrance < 10) {
+      return; // Skip all entity spawning near entrance
+    }
+
+    // Get high amplitude entity noise value for this tile (for monsters and chests only)
+    const entityNoiseValue = this.entityNoise(worldX / 50.0, worldY / 50.0);
+    const spawnType = Dungeon.getEntitySpawnType(entityNoiseValue, 'dungeon');
+
+    // Spawn entities based on noise-determined type (excluding portal)
+    switch (spawnType) {
+      case 'monster':
+        if (this.spawnMonster(tile, worldX, worldY, distanceFromEntrance)) {
+          return; // Don't add chest on monster tile
+        }
+        break;
+
+      case 'chest':
+        if (this.chestCount < this.MAX_CHESTS && distanceFromEntrance > 8) {
+          this.spawnChest(tile, worldX, worldY, distanceFromEntrance, entranceX, entranceY);
+        }
+        break;
+
+      // Portal is handled separately via cached location
+      case 'portal':
+      default:
+        // No entity spawned
+        break;
+    }
+  }
+
+  private spawnPortal(tile: Tile, worldX: number, worldY: number, distanceFromEntrance: number): void {
+    tile.villageStructures = tile.villageStructures ?? [];
+    tile.villageStructures.push({
+      type: 'dungeon_portal',
+      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      poi: new POI({
         type: 'dungeon_portal',
         position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        poi: new POI({
-          type: 'dungeon_portal',
-          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-          interactable: true,
-          passable: false
-        })
-      });
-      this.portalGenerated = true; // Mark portal as generated
-      console.log(`🚪 Generated dungeon portal at distance ${distanceFromEntrance.toFixed(1)} from entrance`);
-      return; // Don't add other features on portal tile
+        interactable: true,
+        passable: false
+      })
+    });
+    this.portalGenerated = true; // Mark portal as generated
+    console.log(`🚪 Spawned dungeon portal at tile (${worldX}, ${worldY}) - distance ${distanceFromEntrance.toFixed(1)} from entrance`);
+  }
+
+  private spawnMonster(tile: Tile, worldX: number, worldY: number, distanceFromEntrance: number): boolean {
+    // Check spacing constraint
+    if (this.hasNearbySpawnedMonster(worldX, worldY, 3)) {
+      return false; // Too close to another monster
     }
 
-    // Enhanced monster spawning - more monsters throughout dungeon
-    const monsterValue = this.monsterNoise(worldX / 150.0, worldY / 150.0);
-    const monsterSpawnChance = Math.min(0.4, 0.1 + (distanceFromEntrance * 0.008)); // Increased base spawn rate
+    const monsterType = this.selectDungeonMonster();
+    const monster = new NPC({
+      type: monsterType,
+      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      aggressive: true
+    });
 
-    if (monsterValue > this.MONSTER_THRESHOLD - 0.2 && Math.random() < monsterSpawnChance) {
-      const monsterType = this.selectDungeonMonster();
-      const monster = new NPC({
-        type: monsterType,
-        position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        aggressive: true
-      });
+    tile.villageStructures = tile.villageStructures ?? [];
+    tile.villageStructures.push({
+      type: monsterType,
+      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      npc: monster
+    });
 
-      tile.villageStructures = tile.villageStructures ?? [];
-      tile.villageStructures.push({
-        type: monsterType,
-        position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        npc: monster
-      });
+    // Track spawned monster for spacing
+    this.spawnedMonsters.add(`${worldX},${worldY}`);
+
+    // Reduced logging for performance
+    if (Math.random() < 0.1) { // Only log 10% of spawns to reduce console spam
       console.log(`👹 Spawned ${monsterType} at distance ${distanceFromEntrance.toFixed(1)} from entrance`);
-      return; // Don't add chest on monster tile
     }
 
-    // Add treasure chests - adjusted for larger dungeon
-    const chestValue = this.chestNoise(worldX / 250.0, worldY / 250.0);
-    const chestSpawnChance = Math.min(0.25, 0.04 + (distanceFromEntrance * 0.003)); // Adjusted spawn rate
+    return true;
+  }
 
-    if (chestValue > this.CHEST_THRESHOLD - 0.15 && Math.random() < chestSpawnChance) {
-      tile.villageStructures = tile.villageStructures ?? [];
-      tile.villageStructures.push({
-        type: 'treasure_chest',
+  private spawnChest(tile: Tile, worldX: number, worldY: number, distanceFromEntrance: number, entranceX: number, entranceY: number): void {
+    // Check spacing constraint
+    if (this.hasNearbySpawnedChest(worldX, worldY, 4)) {
+      return; // Too close to another chest
+    }
+
+    // Generate deterministic chest inventory
+    const chestSeed = entranceX * 1000 + entranceY + worldX + worldY;
+    const chestInventory = this.generateRareChestInventory(distanceFromEntrance, chestSeed);
+
+    tile.villageStructures = tile.villageStructures ?? [];
+    tile.villageStructures.push({
+      type: 'rare_chest',
+      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      poi: new POI({
+        type: 'rare_chest',
         position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        poi: new POI({
-          type: 'treasure_chest',
-          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-          interactable: true,
-          passable: false,
-          customData: {
-            loot: this.generateChestLoot(distanceFromEntrance)
-          }
-        })
-      });
-      console.log(`💰 Spawned treasure chest at distance ${distanceFromEntrance.toFixed(1)} from entrance`);
+        interactable: true,
+        passable: false,
+        customData: {
+          inventory: chestInventory,
+          chestId: `chest_${entranceX}_${entranceY}_${worldX}_${worldY}` // Unique ID for save/load
+        }
+      })
+    });
+
+    // Track spawned chest for spacing
+    this.spawnedChests.add(`${worldX},${worldY}`);
+
+    this.chestCount++; // Increment chest counter
+    // Reduced logging for performance
+    if (this.chestCount <= 3 || this.chestCount % 3 === 0) { // Only log first 3 chests and every 3rd chest
+      console.log(`💰 Spawned rare chest ${this.chestCount}/${this.MAX_CHESTS} at distance ${distanceFromEntrance.toFixed(1)} from entrance with ${chestInventory.filter(i => i !== null).length} items`);
     }
+  }
+
+  /**
+   * Reusable entity spawning system using high amplitude noise
+   * Can be used across different environments (dungeons, caves, etc.)
+   */
+  public static getEntitySpawnType(
+    noiseValue: number,
+    environment: 'dungeon' | 'cave' | 'forest' = 'dungeon'
+  ): 'monster' | 'chest' | 'portal' | 'rare' | null {
+    const absNoise = Math.abs(noiseValue);
+
+        // Environment-specific thresholds
+    const thresholds = {
+      dungeon: {
+        monster: { min: 0.6, max: 0.85 },   // 25% of tiles (increased from 15%)
+        chest: { min: 0.85, max: 0.95 },    // 10% of tiles
+        portal: { min: 0.95, max: 1.0 }     // 5% of tiles (rarest)
+      },
+      cave: {
+        monster: { min: 0.6, max: 0.8 },    // 20% of tiles (more monsters in caves)
+        chest: { min: 0.8, max: 0.95 },     // 15% of tiles
+        rare: { min: 0.95, max: 1.0 }       // 5% of tiles (rare minerals)
+      },
+      forest: {
+        monster: { min: 0.75, max: 0.9 },   // 15% of tiles
+        chest: { min: 0.9, max: 1.0 }       // 10% of tiles (treasure chests)
+      }
+    };
+
+    const envThresholds = thresholds[environment];
+
+    // Check in order of priority (rarest first)
+    if ('portal' in envThresholds && absNoise >= envThresholds.portal.min) return 'portal';
+    if ('rare' in envThresholds && absNoise >= envThresholds.rare.min) return 'rare';
+    if ('chest' in envThresholds && absNoise >= envThresholds.chest.min) return 'chest';
+    if ('monster' in envThresholds && absNoise >= envThresholds.monster.min) return 'monster';
+
+    return null;
   }
 
   private selectDungeonMonster(): 'orc' | 'skeleton' | 'goblin' | 'archer_goblin' | 'club_goblin' | 'farmer_goblin' | 'orc_shaman' | 'spear_goblin' | 'slime' {
@@ -259,50 +368,53 @@ export class Dungeon {
     return monsters[randomIndex] ?? 'goblin'; // Fallback to goblin if index is invalid
   }
 
-  private generateChestLoot(distanceFromEntrance: number): { type: string; quantity: number }[] {
-    // Better loot the deeper you go - adjusted for 50-tile dungeon
-    const lootQuality = Math.min(1.0, distanceFromEntrance / 50.0);
+  private generateRareChestInventory(distanceFromEntrance: number, seed: number): (InventoryItem | null)[] {
+    // Create deterministic random based on seed
+    const seededRandom = (s: number) => {
+      const x = Math.sin(s) * 10000;
+      return x - Math.floor(x);
+    };
 
-    const possibleLoot = [
-      { type: 'copper_ore', quantity: Math.floor(Math.random() * 5) + 2 },
-      { type: 'iron_ore', quantity: Math.floor(Math.random() * 3) + 1 },
-      { type: 'gold_ore', quantity: Math.floor(Math.random() * 2) + 1 },
-      { type: 'leather', quantity: Math.floor(Math.random() * 4) + 1 }
+    const inventory: (InventoryItem | null)[] = new Array<InventoryItem | null>(9).fill(null);
+    let itemIndex = 0;
+
+    // Define possible items with their spawn chances
+    const possibleItems = [
+      { type: 'copper_ore', maxQuantity: 5, chance: 0.7 },
+      { type: 'iron_ore', maxQuantity: 3, chance: 0.6 },
+      { type: 'gold_ore', maxQuantity: 2, chance: 0.5 },
+      { type: 'coal', maxQuantity: 4, chance: 0.6 },
+      { type: 'silver_ore', maxQuantity: 3, chance: 0.4 },
+      { type: 'gold_ingot', maxQuantity: 2, chance: 0.3 },
+      { type: 'bone', maxQuantity: 15, chance: 0.5 }
     ];
 
-    // Add higher quality loot for deeper chests - adjusted thresholds
-    if (lootQuality > 0.4) {
-      possibleLoot.push(
-        { type: 'gold_ingot', quantity: Math.floor(Math.random() * 3) + 1 },
-        { type: 'rare_gem', quantity: Math.floor(Math.random() * 2) + 1 }
-      );
-    }
+    // Generate items based on distance and seed
+    for (let i = 0; i < possibleItems.length && itemIndex < 9; i++) {
+      const item = possibleItems[i]!;
+      const itemSeed = seed + i * 137; // Prime number for better distribution
+      const spawnChance = seededRandom(itemSeed);
 
-    if (lootQuality > 0.7) {
-      possibleLoot.push(
-        { type: 'magic_potion', quantity: Math.floor(Math.random() * 2) + 1 },
-        { type: 'ancient_artifact', quantity: 1 }
-      );
-    }
+      if (spawnChance < item.chance) {
+        const quantitySeed = seed + i * 239;
+        const quantity = Math.floor(seededRandom(quantitySeed) * item.maxQuantity) + 1;
 
-    // Randomly select 2-4 items from possible loot
-    const lootCount = Math.floor(Math.random() * 3) + 2;
-    const selectedLoot: { type: string; quantity: number }[] = [];
-
-    for (let i = 0; i < lootCount; i++) {
-      const randomLoot = possibleLoot[Math.floor(Math.random() * possibleLoot.length)];
-      if (randomLoot && !selectedLoot.find(item => item.type === randomLoot.type)) {
-        selectedLoot.push({ ...randomLoot });
+        if (quantity > 0) {
+          inventory[itemIndex] = {
+            id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+            type: item.type,
+            quantity: quantity
+          };
+          itemIndex++;
+        }
       }
     }
 
-    return selectedLoot;
+    return inventory;
   }
 
   private isNearPosition(x: number, y: number, position: Position, radius: number): boolean {
-    const posX = Math.floor(position.x / this.TILE_SIZE);
-    const posY = Math.floor(position.y / this.TILE_SIZE);
-    const distance = Math.sqrt(Math.pow(x - posX, 2) + Math.pow(y - posY, 2));
+    const distance = Math.sqrt(Math.pow(x - position.x, 2) + Math.pow(y - position.y, 2));
     return distance <= radius;
   }
 
@@ -463,26 +575,160 @@ export class Dungeon {
   }
 
   public setEntrancePosition(position: Position | null): void {
+    // Check if this is the same dungeon entrance
+    const isSameDungeon = this.currentEntrancePosition && position &&
+      Math.abs(this.currentEntrancePosition.x - position.x) < 1 &&
+      Math.abs(this.currentEntrancePosition.y - position.y) < 1;
+
+    // Only clear caches and reset counters if entering a different dungeon
+    if (!isSameDungeon) {
+      // Reset dungeon-specific counters when entering new dungeon
+      this.portalGenerated = false;
+      this.portalPosition = null; // Clear portal position for new dungeon
+      this.chestCount = 0;
+
+      // Clear spawned entity tracking
+      this.spawnedMonsters.clear();
+      this.spawnedChests.clear();
+
+      // Clear cached chunks when entering a new dungeon to ensure fresh generation
+      this.dungeonChunks.clear();
+      this.dungeonNames.clear();
+
+      console.log(`🏚️ Entering new dungeon at ${position ? `(${position.x}, ${position.y})` : 'null'} - cleared caches`);
+    } else {
+      console.log(`🏚️ Re-entering same dungeon at ${position ? `(${position.x}, ${position.y})` : 'null'} - preserving portal location`);
+    }
+
     this.currentEntrancePosition = position;
-    this.portalGenerated = false; // Reset portal generation for new dungeon
 
-    // Clear cached chunks when entering a new dungeon to ensure fresh generation
-    this.dungeonChunks.clear();
-    this.dungeonNames.clear();
+    // If this is a new dungeon and we have an entrance position, find and cache the portal location
+    if (!isSameDungeon && position && !this.portalPosition) {
+      this.findAndCachePortalLocation(position);
+    }
+  }
 
-    console.log(`🏚️ Set new dungeon entrance at ${position ? `(${position.x}, ${position.y})` : 'null'} - cleared caches`);
+  private findAndCachePortalLocation(entrancePosition: Position): void {
+    const entranceX = Math.floor(entrancePosition.x / this.TILE_SIZE);
+    const entranceY = Math.floor(entrancePosition.y / this.TILE_SIZE);
+
+    let furthestTile: { x: number; y: number; distance: number } | null = null;
+
+    // Search in a large radius around the entrance to find all tunnel tiles
+    const searchRadius = 60; // Large enough to cover the entire dungeon
+
+    for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+      for (let dy = -searchRadius; dy <= searchRadius; dy++) {
+        const worldX = entranceX + dx;
+        const worldY = entranceY + dy;
+
+        // Check if this tile is part of the tunnel system
+        if (this.isPartOfTunnel(worldX, worldY, entrancePosition)) {
+          const distance = Math.sqrt(Math.pow(worldX - entranceX, 2) + Math.pow(worldY - entranceY, 2));
+
+          // Only consider tiles that are far enough from entrance (45+ tiles)
+          if (distance >= 45) {
+            if (!furthestTile || distance > furthestTile.distance) {
+              furthestTile = { x: worldX, y: worldY, distance };
+            }
+          }
+        }
+      }
+    }
+
+    if (furthestTile) {
+      // Cache the portal position
+      this.portalPosition = {
+        x: furthestTile.x * this.TILE_SIZE,
+        y: furthestTile.y * this.TILE_SIZE
+      };
+      console.log(`🚪 Cached portal location at tile (${furthestTile.x}, ${furthestTile.y}) - distance ${furthestTile.distance.toFixed(1)} from entrance`);
+    } else {
+      console.warn('⚠️ No valid portal location found in dungeon');
+    }
+  }
+
+  private hasNearbyMonster(centerX: number, centerY: number, radius: number): boolean {
+    // Check in a radius around the center position for existing monsters
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      for (let y = centerY - radius; y <= centerY + radius; y++) {
+        const tile = this.getTile(x, y);
+        if (tile?.villageStructures) {
+          for (const structure of tile.villageStructures) {
+            if (structure.npc && !structure.npc.isDead()) {
+              return true; // Found a nearby monster
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private hasNearbyChest(centerX: number, centerY: number, radius: number): boolean {
+    // Check in a radius around the center position for existing chests
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      for (let y = centerY - radius; y <= centerY + radius; y++) {
+        const tile = this.getTile(x, y);
+        if (tile?.villageStructures) {
+          for (const structure of tile.villageStructures) {
+            if (structure.poi && structure.poi.type === 'rare_chest') {
+              return true; // Found a nearby chest
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private hasNearbySpawnedMonster(centerX: number, centerY: number, radius: number): boolean {
+    // Check in a radius around the center position for already spawned monsters
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      for (let y = centerY - radius; y <= centerY + radius; y++) {
+        // Skip center tile
+        if (x === centerX && y === centerY) continue;
+
+        if (this.spawnedMonsters.has(`${x},${y}`)) {
+          return true; // Found a monster nearby
+        }
+      }
+    }
+    return false;
+  }
+
+  private hasNearbySpawnedChest(centerX: number, centerY: number, radius: number): boolean {
+    // Check in a radius around the center position for already spawned chests
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      for (let y = centerY - radius; y <= centerY + radius; y++) {
+        // Skip center tile
+        if (x === centerX && y === centerY) continue;
+
+        if (this.spawnedChests.has(`${x},${y}`)) {
+          return true; // Found a chest nearby
+        }
+      }
+    }
+    return false;
   }
 
   public getTile(tileX: number, tileY: number): Tile | undefined {
     return this.getDungeonTile(tileX, tileY, this.currentEntrancePosition ?? undefined);
   }
 
-  public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void {
-    if (!playerPosition) return;
+  public getPortalPosition(): Position | null {
+    return this.portalPosition;
+  }
 
-    // Calculate view radius based on a larger dungeon area for NPC movement
-    // Use a much larger radius to allow NPCs to move throughout the dungeon
-    const updateRadiusInTiles = 50; // Large radius to cover entire dungeon
+  public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[], camera?: Camera): void {
+    if (!playerPosition || !camera) return;
+
+    // Calculate view radius in tiles based on camera dimensions (like world system)
+    // Add buffer for smooth transitions
+    const tileSize = this.TILE_SIZE;
+    const viewWidthInTiles = Math.ceil(camera.viewWidth / tileSize) + 5; // +5 tile buffer
+    const viewHeightInTiles = Math.ceil(camera.viewHeight / tileSize) + 5; // +5 tile buffer
+    const viewRadiusInTiles = Math.max(viewWidthInTiles, viewHeightInTiles) / 2;
 
     // Collect all NPCs and village buildings for flocking algorithm (like world system)
     const allNPCs: NPC[] = [];
@@ -494,8 +740,10 @@ export class Dungeon {
     const playerTileY = Math.floor(playerPosition.y / this.TILE_SIZE);
 
     // First pass: collect ALL NPCs from entire dungeon area (like world system)
-    for (let dx = -updateRadiusInTiles; dx <= updateRadiusInTiles; dx++) {
-      for (let dy = -updateRadiusInTiles; dy <= updateRadiusInTiles; dy++) {
+    // Use a large search radius to find all NPCs for flocking algorithm
+    const searchRadiusInTiles = 75; // Large radius to find all NPCs in dungeon
+    for (let dx = -searchRadiusInTiles; dx <= searchRadiusInTiles; dx++) {
+      for (let dy = -searchRadiusInTiles; dy <= searchRadiusInTiles; dy++) {
         const tileX = playerTileX + dx;
         const tileY = playerTileY + dy;
         const tile = this.getTile(tileX, tileY);
@@ -506,14 +754,14 @@ export class Dungeon {
             if (structure.npc && !structure.npc.isDead()) {
               allNPCs.push(structure.npc);
 
-              // Check if NPC is within reasonable update distance (like world system)
+              // Check if NPC is within camera view radius (like world system)
               const npcDistance = Math.sqrt(
                 Math.pow(structure.npc.position.x - playerPosition.x, 2) +
                 Math.pow(structure.npc.position.y - playerPosition.y, 2)
               ) / this.TILE_SIZE;
 
-              // Update NPCs within 30 tiles of player (much larger than before)
-              if (npcDistance <= 30) {
+              // Update NPCs within camera view radius (camera-based, not player-proximity)
+              if (npcDistance <= viewRadiusInTiles) {
                 npcsToUpdate.push({ npc: structure.npc, tileX, tileY });
               }
             }

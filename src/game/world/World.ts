@@ -9,6 +9,7 @@ import { NPC } from '../entities/npc/NPC';
 import type { VillageStructure } from './VillageGenerator';
 import { POI } from '../entities/poi/POI';
 import { Tombstone } from '../entities/poi/Tombstone';
+import { Chest } from '../entities/poi/Chest';
 
 export class World {
     public readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
@@ -33,6 +34,9 @@ export class World {
 
     // Track tombstones by position
     private tombstones = new Map<string, Tombstone>();
+
+    // Track chests by position
+    private chests = new Map<string, Chest>();
 
     constructor(camera: Camera, generator?: WorldGenerator) {
         this.generator = generator ?? new WorldGenerator();
@@ -163,25 +167,32 @@ export class World {
         const viewHeightInTiles = Math.ceil(camera.viewHeight / tileSize) + 5; // +5 tile buffer
         const viewRadiusInTiles = Math.max(viewWidthInTiles, viewHeightInTiles) / 2;
 
-        // Collect all NPCs and village buildings for flocking algorithm
+        // Get only visible chunks for performance optimization
+        const visibleChunks = this.getVisibleChunks(
+            camera.position.x,
+            camera.position.y,
+            camera.viewWidth + (viewRadiusInTiles * tileSize * 2), // Expand for NPC updates
+            camera.viewHeight + (viewRadiusInTiles * tileSize * 2)
+        );
+
+        // Collect NPCs and village buildings from visible chunks only
         const allNPCs: NPC[] = [];
         const allVillageBuildings: Position[] = [];
         const npcsToUpdate: { npc: NPC; structure: VillageStructure; tileX: number; tileY: number }[] = [];
 
-        // First pass: collect all NPCs and village buildings from ALL chunks (not just visible)
-        for (const chunk of this.chunks.values()) {
+        // First pass: collect NPCs and buildings from visible chunks only (performance optimization)
+        for (const chunk of visibleChunks) {
             // Get NPCs from chunk's tracking system
             for (const [tileKey, structure] of chunk.getAllNPCs()) {
                 if (structure.npc && !structure.npc.isDead()) {
                     allNPCs.push(structure.npc);
 
-                    // Check if NPC is within update radius of player
-                    const npcDistance = Math.sqrt(
-                        Math.pow(structure.npc.position.x - playerPosition.x, 2) +
-                        Math.pow(structure.npc.position.y - playerPosition.y, 2)
-                    ) / this.TILE_SIZE;
+                    // Check if NPC is within update radius of player (optimized distance check)
+                    const dx = structure.npc.position.x - playerPosition.x;
+                    const dy = structure.npc.position.y - playerPosition.y;
+                    const npcDistanceSquared = (dx * dx + dy * dy) / (this.TILE_SIZE * this.TILE_SIZE);
 
-                    if (npcDistance <= viewRadiusInTiles) {
+                    if (npcDistanceSquared <= viewRadiusInTiles * viewRadiusInTiles) {
                         const tileCoords = tileKey.split(',').map(Number);
                         if (tileCoords.length === 2) {
                             npcsToUpdate.push({
@@ -196,9 +207,7 @@ export class World {
             }
         }
 
-
-
-        // Collect village buildings from visible tiles
+        // Collect village buildings from visible tiles only
         for (const [tileKey, tile] of this.visibleTileCache) {
             if (tile.villageStructures) {
                 for (const structure of tile.villageStructures) {
@@ -212,7 +221,7 @@ export class World {
             }
         }
 
-        // Second pass: update POIs (from visible tiles) and NPCs (from camera culling)
+        // Update POIs (from visible tiles) - separate from NPC updates for clarity
         for (const [tileKey, tile] of this.visibleTileCache) {
             if (tile.villageStructures) {
                 for (const structure of tile.villageStructures) {
@@ -224,21 +233,39 @@ export class World {
             }
         }
 
+        // Pre-calculate nearby NPCs and buildings for each NPC to avoid redundant calculations
+        const nearbyNPCsCache = new Map<NPC, NPC[]>();
+        const nearbyBuildingsCache = new Map<NPC, Position[]>();
+
+        for (const npcData of npcsToUpdate) {
+            const { npc } = npcData;
+
+            // Cache nearby NPCs (optimized distance calculation)
+            const nearbyNPCs = allNPCs.filter(otherNPC => {
+                if (otherNPC === npc) return false;
+                const dx = otherNPC.position.x - npc.position.x;
+                const dy = otherNPC.position.y - npc.position.y;
+                const distanceSquared = (dx * dx + dy * dy) / (16 * 16);
+                return distanceSquared <= 100; // 10 tiles squared
+            });
+            nearbyNPCsCache.set(npc, nearbyNPCs);
+
+            // Cache nearby buildings (optimized distance calculation)
+            const nearbyBuildings = allVillageBuildings.filter(building => {
+                const dx = building.x - npc.position.x;
+                const dy = building.y - npc.position.y;
+                const distanceSquared = (dx * dx + dy * dy) / (16 * 16);
+                return distanceSquared <= 225; // 15 tiles squared
+            });
+            nearbyBuildingsCache.set(npc, nearbyBuildings);
+        }
+
         // First phase: Collect movement intentions from all NPCs
         for (const npcData of npcsToUpdate) {
             const { npc } = npcData;
-            const pos = playerPosition ?? { x: 0, y: 0 };
+            const pos = playerPosition;
             const inventory = playerInventory ?? [];
-
-            // Get nearby NPCs within reasonable distance (10 tiles)
-            const nearbyNPCs = allNPCs.filter(otherNPC => {
-                if (otherNPC === npc) return false;
-                const distance = Math.sqrt(
-                    Math.pow(otherNPC.position.x - npc.position.x, 2) +
-                    Math.pow(otherNPC.position.y - npc.position.y, 2)
-                ) / 16;
-                return distance <= 10; // Within 10 tiles
-            });
+            const nearbyNPCs = nearbyNPCsCache.get(npc) ?? [];
 
             // Get movement intention for this NPC
             const movementIntention = npc.getMovementIntention(pos, inventory, nearbyNPCs);
@@ -250,32 +277,13 @@ export class World {
             }
         }
 
-
-
-        // Second phase: Update NPCs with movement intentions registered
+        // Second phase: Update NPCs with cached nearby entities
         for (const npcData of npcsToUpdate) {
             const { npc, structure, tileX, tileY } = npcData;
-            const pos = playerPosition ?? { x: 0, y: 0 };
+            const pos = playerPosition;
             const inventory = playerInventory ?? [];
-
-            // Get nearby NPCs within reasonable distance (10 tiles)
-            const nearbyNPCs = allNPCs.filter(otherNPC => {
-                if (otherNPC === npc) return false;
-                const distance = Math.sqrt(
-                    Math.pow(otherNPC.position.x - npc.position.x, 2) +
-                    Math.pow(otherNPC.position.y - npc.position.y, 2)
-                ) / 16;
-                return distance <= 10; // Within 10 tiles
-            });
-
-            // Get nearby village buildings within reasonable distance (15 tiles)
-            const nearbyBuildings = allVillageBuildings.filter(building => {
-                const distance = Math.sqrt(
-                    Math.pow(building.x - npc.position.x, 2) +
-                    Math.pow(building.y - npc.position.y, 2)
-                ) / 16;
-                return distance <= 15; // Within 15 tiles
-            });
+            const nearbyNPCs = nearbyNPCsCache.get(npc) ?? [];
+            const nearbyBuildings = nearbyBuildingsCache.get(npc) ?? [];
 
             // Store old position for movement tracking
             const oldTileX = Math.floor(npc.position.x / this.TILE_SIZE);
@@ -766,8 +774,6 @@ export class World {
             return true;
         }
 
-
-
         return false; // Cannot speculative move
     }
 
@@ -822,9 +828,7 @@ export class World {
 
                 // Register in chunk's NPC tracking system
                 chunk.getAllNPCs().set(`${localX},${localY}`, offspringStructure);
-
-
-                          }
+            }
         } catch (error) {
             console.error(`❌ [BREEDING ERROR] Failed to create offspring:`, error);
         }
@@ -953,5 +957,106 @@ export class World {
         }
 
         return false;
+    }
+
+    // Chest management methods
+    public createChest(position: Position, chestType: string, inventory: (InventoryItem | null)[], chestId: string): Chest {
+        const chest = new Chest({
+            position,
+            inventory,
+            chestType,
+            chestId
+        });
+
+        const tileX = Math.floor(position.x / this.TILE_SIZE);
+        const tileY = Math.floor(position.y / this.TILE_SIZE);
+        const chestKey = `${tileX},${tileY}`;
+
+        this.chests.set(chestKey, chest);
+
+        // Add chest as a POI to the tile
+        const tile = this.getTile(tileX, tileY);
+        if (tile) {
+            tile.villageStructures = tile.villageStructures ?? [];
+            tile.villageStructures.push({
+                type: chestType,
+                position,
+                poi: new POI({
+                    type: chestType,
+                    position,
+                    interactable: true,
+                    passable: false,
+                    customData: {
+                        chestId: chestId,
+                        inventory: inventory
+                    }
+                })
+            });
+        }
+
+        this.invalidateCache();
+        return chest;
+    }
+
+    public getChestAt(tileX: number, tileY: number): Chest | null {
+        const chestKey = `${tileX},${tileY}`;
+        return this.chests.get(chestKey) ?? null;
+    }
+
+    public interactWithChest(tileX: number, tileY: number): { chest: Chest; success: boolean } | null {
+        const chest = this.getChestAt(tileX, tileY);
+        if (!chest) return null;
+
+        // Chest interaction will be handled by the UI system
+        return { chest, success: true };
+    }
+
+    public removeChest(tileX: number, tileY: number): boolean {
+        const chestKey = `${tileX},${tileY}`;
+        const chest = this.chests.get(chestKey);
+
+        if (chest?.isEmpty()) {
+            this.chests.delete(chestKey);
+
+            // Remove chest POI from tile
+            const tile = this.getTile(tileX, tileY);
+            if (tile?.villageStructures) {
+                tile.villageStructures = tile.villageStructures.filter(
+                    structure => structure.type !== chest.chestType
+                );
+                if (tile.villageStructures.length === 0) {
+                    delete tile.villageStructures;
+                }
+            }
+
+            this.invalidateCache();
+            return true;
+        }
+
+        return false;
+    }
+
+    public updateChestInventory(chestId: string, inventory: (InventoryItem | null)[]): void {
+        // Find chest by ID and update its inventory
+        for (const [key, chest] of this.chests) {
+            if (chest.chestId === chestId) {
+                chest.inventory = inventory;
+
+                // Also update the POI's custom data
+                const tileX = Math.floor(chest.position.x / this.TILE_SIZE);
+                const tileY = Math.floor(chest.position.y / this.TILE_SIZE);
+                const tile = this.getTile(tileX, tileY);
+
+                if (tile?.villageStructures) {
+                    for (const structure of tile.villageStructures) {
+                        if (structure.poi && structure.poi.customData?.chestId === chestId) {
+                            structure.poi.customData.inventory = inventory;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
     }
 }
