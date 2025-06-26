@@ -1,16 +1,63 @@
 import type { InputAction } from './InputSystem';
-import type { PlayerState } from '../engine/types';
+import type { PlayerState, Tile as TileInterface, VillageStructure, MineStructure, DungeonStructure } from '../engine/types';
 import type { World } from '../world/World';
 import type { Dungeon } from '../world/Dungeon';
 import type { Camera } from './Camera';
 import type { UIManager } from '../ui/UIManager';
 import type { Player as PlayerEntity } from '../entities/player/Player';
 import type { Tile } from '../world/WorldGenerator';
-import type { VillageStructure } from '../world/VillageGenerator';
+import type { VillageStructure as WorldVillageStructure } from '../world/VillageGenerator';
 import type { POI, POIInteractionResult } from '../entities/poi/POI';
 import type { NPC } from '../entities/npc/NPC';
 import type { Cactus } from '../entities/structure/Cactus';
 import { WorldGenerator } from '../world/WorldGenerator';
+
+// Type guards for different structure types
+function isVillageStructure(structure: unknown): structure is VillageStructure {
+  if (structure === null || typeof structure !== 'object') return false;
+  const obj = structure as Record<string, unknown>;
+  return typeof obj.type === 'string' &&
+         obj.position !== undefined &&
+         typeof obj.position === 'object' &&
+         obj.position !== null;
+}
+
+function isMineStructure(structure: unknown): structure is MineStructure {
+  if (structure === null || typeof structure !== 'object') return false;
+  const obj = structure as Record<string, unknown>;
+  return typeof obj.type === 'string' &&
+         obj.position !== undefined &&
+         typeof obj.position === 'object' &&
+         obj.position !== null;
+}
+
+function isDungeonStructure(structure: unknown): structure is DungeonStructure {
+  if (structure === null || typeof structure !== 'object') return false;
+  const obj = structure as Record<string, unknown>;
+  return typeof obj.type === 'string' &&
+         obj.position !== undefined &&
+         typeof obj.position === 'object' &&
+         obj.position !== null;
+}
+
+function isWorldStructure(structure: unknown): structure is WorldVillageStructure {
+  if (structure === null || typeof structure !== 'object') return false;
+  const obj = structure as Record<string, unknown>;
+  return typeof obj.type === 'string' &&
+         obj.position !== undefined &&
+         typeof obj.position === 'object' &&
+         obj.position !== null;
+}
+
+// Type guard for cactus arrays
+function isCactusArray(arr: unknown[]): arr is Cactus[] {
+  return arr.every(item => {
+    if (!item || typeof item !== 'object') return false;
+    const obj = item as Record<string, unknown>;
+    return typeof obj.getHealth === 'function' &&
+           typeof obj.getVariant === 'function';
+  });
+}
 
 export class ActionSystem {
   private world: World;
@@ -84,11 +131,11 @@ export class ActionSystem {
     }
   }
 
-  private handleWorldAttack(tile: Tile | null, tileX: number, tileY: number): void {
-    // Check for trees
-    if (tile?.trees && tile.trees.length > 0) {
+  private handleWorldAttack(tile: TileInterface | Tile | null, tileX: number, tileY: number): void {
+    // Check for trees (only in world tiles)
+    if (tile && 'trees' in tile && tile.trees && tile.trees.length > 0) {
       const tree = tile.trees[0];
-      if (tree) {
+      if (tree && typeof tree === 'object' && 'getHealth' in tree && 'takeDamage' in tree) {
         console.log(`Tree health before attack: ${tree.getHealth()}/${tree.getMaxHealth()}`);
         const result = tree.takeDamage(this.player.attackDamage);
 
@@ -103,10 +150,10 @@ export class ActionSystem {
         }
       }
     }
-    // Check for cactus
-    else if (tile?.cactus && tile.cactus.length > 0) {
+    // Check for cactus (only in world tiles)
+    else if (tile && 'cactus' in tile && tile.cactus && tile.cactus.length > 0) {
       const cactus = tile.cactus[0];
-      if (cactus) {
+      if (cactus && typeof cactus === 'object' && 'getHealth' in cactus && 'takeDamage' in cactus) {
         console.log(`Cactus health before attack: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
         const result = cactus.takeDamage(this.player.attackDamage);
 
@@ -117,13 +164,17 @@ export class ActionSystem {
             console.log(`✅ Added ${result.dropValue} ${result.dropType} to inventory`);
           }
 
-          // Remove cactus completely from tile and convert to SAND
-          tile.cactus = tile.cactus.filter((c: Cactus) => c !== cactus);
-          if (tile.cactus.length === 0) {
-            delete tile.cactus;
-            tile.value = 'SAND';
-            this.world.invalidateCache();
-            console.log(`Cactus completely removed - tile converted to SAND at (${tileX}, ${tileY})`);
+          // Remove cactus completely from tile and convert to SAND (only for world tiles)
+          if ('cactus' in tile && tile.cactus && isCactusArray(tile.cactus)) {
+            const updatedCactus = tile.cactus.filter((c) => c !== cactus);
+            if (updatedCactus.length > 0) {
+              (tile as { cactus: Cactus[] }).cactus = updatedCactus;
+            } else {
+              delete (tile as { cactus?: Cactus[] }).cactus;
+              tile.value = 'SAND';
+              this.world.invalidateCache();
+              console.log(`Cactus completely removed - tile converted to SAND at (${tileX}, ${tileY})`);
+            }
           }
         } else {
           console.log(`Cactus took ${this.player.attackDamage} damage. Health: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
@@ -136,12 +187,14 @@ export class ActionSystem {
         if (structure.npc && !structure.npc.isDead()) {
           const npc = structure.npc;
           console.log(`Attacking ${npc.type} NPC at (${tileX}, ${tileY})`);
-          npc.takeDamage(this.player.attackDamage);
+          if ('takeDamage' in npc && typeof npc.takeDamage === 'function') {
+            npc.takeDamage(this.player.attackDamage);
 
-          if (npc.isDead()) {
-            console.log(`💀 ${npc.type} NPC defeated!`);
-          } else {
-            console.log(`${npc.type} took ${this.player.attackDamage} damage. Health: ${npc.health}/${npc.maxHealth}`);
+            if (npc.isDead()) {
+              console.log(`💀 ${npc.type} NPC defeated!`);
+            } else {
+              console.log(`${npc.type} took ${this.player.attackDamage} damage. Health: ${npc.health}/${npc.maxHealth}`);
+            }
           }
           break;
         }
@@ -149,19 +202,21 @@ export class ActionSystem {
     }
   }
 
-  private handleDungeonAttack(tile: Tile | null, tileX: number, tileY: number): void {
+  private handleDungeonAttack(tile: TileInterface | Tile | null, tileX: number, tileY: number): void {
     // Check for dungeon monsters
     if (tile?.villageStructures) {
       for (const structure of tile.villageStructures) {
         if (structure.npc && !structure.npc.isDead()) {
-          const npc: NPC = structure.npc;
+          const npc = structure.npc;
           console.log(`Attacking ${npc.type} monster at (${tileX}, ${tileY})`);
-          npc.takeDamage(this.player.attackDamage);
+          if ('takeDamage' in npc && typeof npc.takeDamage === 'function') {
+            npc.takeDamage(this.player.attackDamage);
 
-          if (npc.isDead()) {
-            console.log(`💀 ${npc.type} monster defeated!`);
-          } else {
-            console.log(`${npc.type} took ${this.player.attackDamage} damage. Health: ${npc.health}/${npc.maxHealth}`);
+            if (npc.isDead()) {
+              console.log(`💀 ${npc.type} monster defeated!`);
+            } else {
+              console.log(`${npc.type} took ${this.player.attackDamage} damage. Health: ${npc.health}/${npc.maxHealth}`);
+            }
           }
           break;
         }
@@ -185,12 +240,12 @@ export class ActionSystem {
     }
   }
 
-  private handleWorldInteract(tile: Tile | null, tileX: number, tileY: number): void {
+  private handleWorldInteract(tile: TileInterface | Tile | null, tileX: number, tileY: number): void {
     // Check for village structures first (POIs and NPCs)
     if (tile?.villageStructures) {
       for (const structure of tile.villageStructures) {
         if (structure.poi) {
-          const poi: POI = structure.poi;
+          const poi: POI = structure.poi as POI;
           console.log(`🔍 Interacting with ${poi.type} at (${tileX}, ${tileY})`);
 
           const result: POIInteractionResult = poi.interact();
@@ -221,21 +276,21 @@ export class ActionSystem {
     }
 
     // Check for other interactable structures
-    if (tile?.trees && tile.trees.length > 0) {
+    if (tile && 'trees' in tile && tile.trees && tile.trees.length > 0) {
       console.log('Interacting with tree - could harvest fruit, check growth, etc.');
-    } else if (tile?.cactus && tile.cactus.length > 0) {
+    } else if (tile && 'cactus' in tile && tile.cactus && tile.cactus.length > 0) {
       console.log('Interacting with cactus - could harvest water, check growth, etc.');
     } else {
       console.log('Nothing to interact with in that direction');
     }
   }
 
-  private handleDungeonInteract(tile: Tile | null, tileX: number, tileY: number): void {
+  private handleDungeonInteract(tile: TileInterface | Tile | null, tileX: number, tileY: number): void {
     // Check for dungeon POI structures
     if (tile?.villageStructures) {
       for (const structure of tile.villageStructures) {
         if (structure.poi) {
-          const poi: POI = structure.poi;
+          const poi = structure.poi as POI;
 
           if (poi.type === 'rare_chest') {
             console.log('🏺 Interacting with rare chest in dungeon');
@@ -332,6 +387,19 @@ export class ActionSystem {
     }
   }
 
+  private getStructureDescription(structure: unknown): string {
+    if (isVillageStructure(structure)) {
+      return structure.poi ? structure.poi.type : structure.npc ? `${structure.npc.type} Village NPC` : 'Village Structure';
+    } else if (isMineStructure(structure)) {
+      return structure.poi ? structure.poi.type : structure.npc ? `${structure.npc.type} Mine NPC` : 'Mine Structure';
+    } else if (isDungeonStructure(structure)) {
+      return structure.poi ? structure.poi.type : structure.npc ? `${structure.npc.type} Monster` : 'Dungeon Structure';
+    } else if (isWorldStructure(structure)) {
+      return structure.poi ? structure.poi.type : structure.npc ? `${structure.npc.type} World NPC` : 'World Structure';
+    }
+    return 'Unknown Structure';
+  }
+
   private logFacingTile(): void {
     const facingPos = this.player.getFacingPosition(WorldGenerator.TILE_SIZE);
     const tileX = Math.floor(facingPos.x / WorldGenerator.TILE_SIZE);
@@ -344,13 +412,17 @@ export class ActionSystem {
     let tileInfo = tile?.value ?? 'UNKNOWN';
 
     if (this.camera.renderingMode === 'world') {
-      if (tile?.trees && tile.trees.length > 0) {
+      if (tile && 'trees' in tile && tile.trees && tile.trees.length > 0) {
         const tree = tile.trees[0];
-        tileInfo += ` (Tree: ${tree?.getHealth()}/${tree?.getMaxHealth()} HP)`;
+        if (tree && 'getHealth' in tree && 'getMaxHealth' in tree) {
+          tileInfo += ` (Tree: ${tree.getHealth()}/${tree.getMaxHealth()} HP)`;
+        }
       }
-      if (tile?.cactus && tile.cactus.length > 0) {
+      if (tile && 'cactus' in tile && tile.cactus && tile.cactus.length > 0) {
         const cactus = tile.cactus[0];
-        tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP, Variant: ${cactus?.getVariant()})`;
+        if (cactus && 'getHealth' in cactus && 'getMaxHealth' in cactus && 'getVariant' in cactus) {
+          tileInfo += ` (Cactus: ${cactus.getHealth()}/${cactus.getMaxHealth()} HP, Variant: ${cactus.getVariant()})`;
+        }
       }
 
       const npc = this.world.getNPCAt(tileX, tileY);
@@ -359,8 +431,8 @@ export class ActionSystem {
       }
     } else {
       if (tile?.villageStructures && tile.villageStructures.length > 0) {
-        const dungeonStructures = tile.villageStructures.map((s: VillageStructure) =>
-          s.poi ? s.poi.type : s.npc ? `${s.npc.type} Monster` : 'unknown'
+        const dungeonStructures = tile.villageStructures.map(structure =>
+          this.getStructureDescription(structure)
         ).join(', ');
         tileInfo += ` (Dungeon: ${dungeonStructures})`;
       }

@@ -3,6 +3,7 @@ import alea from 'alea';
 import { Tree, TreeGrowthStage } from '../entities/structure/Tree';
 import { Cactus, CactusVariant } from '../entities/structure/Cactus';
 import { VillageGenerator, type VillageStructure } from './VillageGenerator';
+import { type LightingSystem } from '../systems/LightingSystem';
 
 export type TileType =
   | 'DEEP_WATER'
@@ -19,7 +20,8 @@ export type TileType =
   | 'STONE'
   | 'SNOW'
   | 'PLAYER'
-  | 'VOID';
+  | 'VOID'
+  | 'WOOD';
 
 export interface Tile {
   x: number;
@@ -37,6 +39,8 @@ export interface Tile {
   spriteId?: string;
   dirtTimer?: number; // For DIRT -> GRASS regeneration
   villageStructures?: VillageStructure[]; // Village structures on this tile
+  lightLevel?: number; // Base light level (0.0 to 1.0)
+  effectiveLightLevel?: number; // Final light level after torch effects
 }
 
 export class WorldGenerator {
@@ -142,7 +146,9 @@ export class WorldGenerator {
           temperature,
           humidity,
           riverValue,
-          flowDirection
+          flowDirection,
+          lightLevel: 1.0, // World tiles have full daylight by default
+          effectiveLightLevel: 1.0 // Will be calculated by lighting system
         };
 
         // Add trees to FOREST tiles (common) and GRASS tiles (rare)
@@ -393,7 +399,18 @@ export class WorldGenerator {
     const { value: riverValue, flowDirection } = this.generateRiver(x, y, height);
     const value = this.getTileTypeFromClimate(height, temperature, humidity, riverValue, flowDirection);
 
-    const tile: Tile = { x, y, value, height, temperature, humidity, riverValue, flowDirection };
+    const tile: Tile = {
+      x,
+      y,
+      value,
+      height,
+      temperature,
+      humidity,
+      riverValue,
+      flowDirection,
+      lightLevel: 1.0, // World tiles have full daylight by default
+      effectiveLightLevel: 1.0 // Will be calculated by lighting system
+    };
 
         // Add trees to FOREST tiles (common) and GRASS tiles (rare)
     if (value === 'FOREST') {
@@ -530,5 +547,9 @@ export class WorldGenerator {
       default:
         return undefined; // Use tile colors for other types
     }
+  }
+
+  public setLightingSystem(lightingSystem: LightingSystem): void {
+    this.villageGenerator.setLightingSystem(lightingSystem);
   }
 }

@@ -1,7 +1,9 @@
 import { createNoise2D } from 'simplex-noise';
+import alea from 'alea';
 import type { Position } from '../engine/types';
-import { POI } from '../entities/poi/POI';
 import { NPC } from '../entities/npc/NPC';
+import { POI } from '../entities/poi/POI';
+import { LightingSystem } from '../systems/LightingSystem';
 
 export interface VillageStructure {
   type: string;
@@ -15,6 +17,7 @@ export class VillageGenerator {
   private structureNoise: (x: number, y: number) => number;
   private animalNoise: (x: number, y: number) => number;
   private mineNoise: (x: number, y: number) => number;
+  private monsterNoise: (x: number, y: number) => number;
 
   private readonly VILLAGE_THRESHOLD = 0.85; // Very rare villages
 
@@ -36,14 +39,19 @@ export class VillageGenerator {
   // Village names cache to ensure same village always gets same name
   private villageNamesCache = new Map<string, string>();
 
-  constructor(seed?: string) {
-    const seedValue = this.hashSeed(seed ?? 'default');
+  private lightingSystem: LightingSystem | null = null;
 
-    // Create different noise functions for different features
-    this.villageNoise = createNoise2D(() => seedValue * 1.1);
-    this.structureNoise = createNoise2D(() => seedValue * 2.3);
-    this.animalNoise = createNoise2D(() => seedValue * 3.7);
-    this.mineNoise = createNoise2D(() => seedValue * 4.9);
+  constructor(seed?: string) {
+    const prng = seed ? alea(seed) : alea();
+    this.villageNoise = createNoise2D(prng);
+    this.structureNoise = createNoise2D(prng);
+    this.animalNoise = createNoise2D(prng);
+    this.mineNoise = createNoise2D(prng);
+    this.monsterNoise = createNoise2D(prng);
+  }
+
+  public setLightingSystem(lightingSystem: LightingSystem): void {
+    this.lightingSystem = lightingSystem;
   }
 
   private hashSeed(seed: string): number {
@@ -682,15 +690,18 @@ export class VillageGenerator {
     const worldY = tileY * 16;
     const noiseX = worldX / 800; // Different frequency for monsters
     const noiseY = worldY / 800;
-    const monsterValue = this.animalNoise(noiseX, noiseY); // Reuse animal noise but different scale
+    const monsterValue = this.monsterNoise(noiseX, noiseY); // Use dedicated monster noise
 
-    // BACK TO NORMAL: Original threshold for monsters
-    if (monsterValue < 0.98) { // Changed back from 0.7 to 0.98
-      return null;
+    // Get current world light level for monster spawning
+    const worldLightLevel = this.lightingSystem?.getWorldLightLevel() ?? 1.0; // Default to full daylight if no lighting system
+
+    // Use unified light-based spawning system
+    if (!LightingSystem.canSpawnMonster(worldLightLevel, monsterValue, 0.98)) {
+      return null; // Cannot spawn monster based on light level and noise
     }
 
-    // Add back the additional randomness check
-    if (Math.random() > 0.2) {
+    // Add back the additional randomness check (reduced from 0.2 to 0.15 for slightly more monsters)
+    if (Math.random() > 0.15) {
       return null;
     }
 
@@ -710,7 +721,7 @@ export class VillageGenerator {
 
     if (monster) {
       existingStructures.set(tileKey, monster);
-      console.log(`👹 Generated wild ${monsterType} at tile (${tileX}, ${tileY}) on ${tileType}`);
+      console.log(`👹 Generated wild ${monsterType} at tile (${tileX}, ${tileY}) on ${tileType} during ${worldLightLevel < 0.6 ? 'night' : 'day'} (light: ${worldLightLevel.toFixed(2)})`);
     }
 
     return monster;

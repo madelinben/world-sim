@@ -1,17 +1,23 @@
 import { createNoise2D } from 'simplex-noise';
-import type { Position } from '../engine/types';
-import type { Tile } from './WorldGenerator';
+import type { Position, Tile, DungeonStructure, NPCLike } from '../engine/types';
 import { WorldGenerator } from './WorldGenerator';
-import { NPC } from '../entities/npc/NPC';
 import { POI } from '../entities/poi/POI';
-import type { VillageStructure } from './VillageGenerator';
+import { NPC } from '../entities/npc/NPC';
+import type { InventoryItem, Inventory } from '../entities/inventory/Inventory';
 import type { Camera } from '../systems/Camera';
-import type { InventoryItem } from '../entities/inventory/Inventory';
+import { LightingSystem } from '../systems/LightingSystem';
+import { Tombstone } from '../entities/poi/Tombstone';
 
-export interface DungeonChunk {
-  chunkX: number;
-  chunkY: number;
-  tiles: Tile[][];
+interface DungeonChunk {
+  tiles: (Tile | null)[][];
+}
+
+// Simple dungeon structure interface that works with actual classes
+interface DungeonTileStructure {
+  type: string;
+  position: Position;
+  poi?: POI;
+  npc?: NPC;
 }
 
 export class Dungeon {
@@ -19,7 +25,7 @@ export class Dungeon {
   private monsterNoise: (x: number, y: number) => number;
   private chestNoise: (x: number, y: number) => number;
   private entityNoise: (x: number, y: number) => number; // High amplitude noise for entity placement
-    private readonly TUNNEL_THRESHOLD = 0.3; // Tunnel threshold for noise
+  private readonly TUNNEL_THRESHOLD = 0.3; // Tunnel threshold for noise
   private readonly TILE_SIZE = WorldGenerator.TILE_SIZE;
   private dungeonChunks = new Map<string, DungeonChunk>();
   private dungeonNames = new Map<string, string>(); // Cache dungeon names
@@ -28,6 +34,11 @@ export class Dungeon {
   private portalPosition: Position | null = null; // Store portal position for this dungeon
   private chestCount = 0; // Track number of chests generated in current dungeon
   private readonly MAX_CHESTS = 10; // Maximum chests per dungeon
+  private lightingSystem: LightingSystem | null = null; // Reference to lighting system for portal registration
+  private pendingLightingUpdates: Array<{ x: number; y: number; intensity: number; radius: number }> = [];
+
+  // Track current player position for NPC collision detection
+  private currentPlayerPosition: Position | null = null;
 
   // Track spawned entities for spacing during generation
   private spawnedMonsters = new Set<string>(); // Track monster positions as "x,y"
@@ -65,7 +76,7 @@ export class Dungeon {
   }
 
   public generateDungeonChunk(chunkX: number, chunkY: number, chunkSize: number, entrancePosition?: Position): DungeonChunk {
-    const tiles: Tile[][] = [];
+    const tiles: (Tile | null)[][] = [];
 
     // Initialize chunk with void tiles
     for (let y = 0; y < chunkSize; y++) {
@@ -79,29 +90,31 @@ export class Dungeon {
     }
 
     const chunk: DungeonChunk = {
-      chunkX,
-      chunkY,
       tiles
     };
 
     const chunkKey = `${chunkX},${chunkY}`;
     this.dungeonChunks.set(chunkKey, chunk);
 
+    // Process any pending lighting updates after chunk generation is complete
+    this.processPendingLightingUpdates();
+
     return chunk;
   }
 
-  private generateDungeonTile(worldX: number, worldY: number, entrancePosition?: Position): Tile {
-    // Default to void
-    let tileType: 'STONE' | 'COBBLESTONE' | 'VOID' = 'VOID';
+  private generateDungeonTile(worldX: number, worldY: number, entrancePosition?: Position): Tile | null {
+    // Default to stone (impassable walls)
+    let tileType: 'STONE' | 'COBBLESTONE' | 'DIRT' = 'STONE';
 
     // Check if this tile is part of the tunnel system
     const isTunnel = this.isPartOfTunnel(worldX, worldY, entrancePosition);
 
     if (isTunnel) {
-      tileType = this.getTunnelTileType(worldX, worldY);
+      // Random mix of COBBLESTONE (60%) and DIRT (40%) for tunnel floors
+      tileType = Math.random() < 0.6 ? 'COBBLESTONE' : 'DIRT';
     }
 
-    // Create base tile
+    // Create base tile with proper light levels
     const tile: Tile = {
       x: worldX,
       y: worldY,
@@ -109,7 +122,10 @@ export class Dungeon {
       height: 0.5, // Default dungeon height
       temperature: 0.3, // Cool dungeon temperature
       humidity: 0.7, // High dungeon humidity
-      interacted: false
+      interacted: false,
+      villageStructures: [],
+      lightLevel: 0.0, // Dungeons are completely dark
+      effectiveLightLevel: 0.0 // Will be calculated with torch effects
     };
 
     // Add entrance at the exact entrance position
@@ -118,7 +134,7 @@ export class Dungeon {
         Math.floor(entrancePosition.y / this.TILE_SIZE) === worldY) {
 
       // Ensure entrance tile is passable
-      tile.value = 'STONE';
+      tile.value = 'COBBLESTONE';
 
       // Add entrance POI
       tile.villageStructures = tile.villageStructures ?? [];
@@ -135,7 +151,7 @@ export class Dungeon {
     }
 
     // Add dungeon features if this is a tunnel tile (but not the entrance)
-    if (isTunnel && tileType !== 'VOID' &&
+    if (isTunnel && (tileType === 'COBBLESTONE' || tileType === 'DIRT') &&
         !(entrancePosition &&
           Math.floor(entrancePosition.x / this.TILE_SIZE) === worldX &&
           Math.floor(entrancePosition.y / this.TILE_SIZE) === worldY)) {
@@ -184,12 +200,6 @@ export class Dungeon {
     return isMainPath || isBranch || isRoom || isNearEntrance || isCorridor;
   }
 
-  private getTunnelTileType(worldX: number, worldY: number): 'STONE' | 'COBBLESTONE' {
-    // Use simple random to mix stone and cobblestone
-    const random = Math.abs(Math.sin(worldX * 12.9898 + worldY * 78.233)) % 1;
-    return random < 0.6 ? 'STONE' : 'COBBLESTONE';
-  }
-
   private addDungeonFeatures(tile: Tile, worldX: number, worldY: number, entrancePosition?: Position): void {
     if (!entrancePosition) return;
 
@@ -221,7 +231,9 @@ export class Dungeon {
     // Spawn entities based on noise-determined type (excluding portal)
     switch (spawnType) {
       case 'monster':
-        if (this.spawnMonster(tile, worldX, worldY, distanceFromEntrance)) {
+        // Check if monster can spawn based on light level and noise
+        const effectiveLightLevel = this.lightingSystem?.calculateTileEffectiveLight(tile, 'dungeon') ?? (tile.effectiveLightLevel ?? tile.lightLevel ?? 0.0);
+        if (LightingSystem.canSpawnMonster(effectiveLightLevel, entityNoiseValue, 0.6) && this.spawnMonster(tile, worldX, worldY, distanceFromEntrance)) {
           return; // Don't add chest on monster tile
         }
         break;
@@ -240,20 +252,212 @@ export class Dungeon {
     }
   }
 
+  /**
+   * Set the lighting system reference for portal light registration
+   */
+  public setLightingSystem(lightingSystem: LightingSystem): void {
+    this.lightingSystem = lightingSystem;
+
+    // Register any existing portals with the lighting system
+    this.registerExistingPortalsWithLighting();
+  }
+
+  /**
+   * Register any existing portals in the dungeon with the lighting system
+   */
+  private registerExistingPortalsWithLighting(): void {
+    if (!this.lightingSystem || !this.currentEntrancePosition) return;
+
+    // Use cached portal position if available
+    if (this.portalPosition) {
+      const portalTileX = Math.floor(this.portalPosition.x / this.TILE_SIZE);
+      const portalTileY = Math.floor(this.portalPosition.y / this.TILE_SIZE);
+
+      // Register with lighting system
+      this.lightingSystem.addPortal(portalTileX, portalTileY);
+
+      // Update the portal tile and surrounding tiles with proper lighting
+      const portalTile = this.getExistingDungeonTile(portalTileX, portalTileY);
+      if (portalTile) {
+        // Set portal tile to full brightness
+        portalTile.effectiveLightLevel = Math.min(1.0, 0.0 + 0.6);
+        console.log(`💡 Cached portal tile (${portalTileX}, ${portalTileY}) set to full brightness: ${portalTile.effectiveLightLevel}`);
+
+        // Update surrounding tiles
+        this.updateSurroundingTileLightLevels(portalTileX, portalTileY, 0.6, 2.5);
+      }
+
+      console.log(`🔄 Registered cached portal at tile (${portalTileX}, ${portalTileY}) with lighting system`);
+    } else {
+      // Fallback: Search through all generated chunks for existing portals
+      for (const [chunkKey, chunk] of this.dungeonChunks) {
+        for (const tileRow of chunk.tiles) {
+          if (!tileRow) continue;
+          for (const tile of tileRow) {
+            if (tile?.villageStructures) {
+              for (const structure of tile.villageStructures) {
+                if (structure.poi?.type === 'dungeon_portal') {
+                  // Found an existing portal - register it with lighting system
+                  const tileX = tile.x;
+                  const tileY = tile.y;
+                  this.lightingSystem.addPortal(tileX, tileY);
+
+                  // Set portal tile to full brightness
+                  tile.effectiveLightLevel = Math.min(1.0, 0.0 + 0.6);
+                  console.log(`💡 Found portal tile (${tileX}, ${tileY}) set to full brightness: ${tile.effectiveLightLevel}`);
+
+                  // Update surrounding tiles
+                  this.updateSurroundingTileLightLevels(tileX, tileY, 0.6, 2.5);
+
+                  console.log(`🔄 Retroactively registered existing portal at tile (${tileX}, ${tileY}) with lighting system`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`🔄 Completed retroactive portal registration. Total portals: ${this.lightingSystem ? 'registered' : 'none'}`);
+  }
+
   private spawnPortal(tile: Tile, worldX: number, worldY: number, distanceFromEntrance: number): void {
-    tile.villageStructures = tile.villageStructures ?? [];
-    tile.villageStructures.push({
-      type: 'dungeon_portal',
-      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-      poi: new POI({
+      tile.villageStructures = tile.villageStructures ?? [];
+      tile.villageStructures.push({
         type: 'dungeon_portal',
         position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        interactable: true,
-        passable: false
-      })
-    });
-    this.portalGenerated = true; // Mark portal as generated
+        poi: new POI({
+          type: 'dungeon_portal',
+          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+          interactable: true,
+        passable: false,
+        customData: {
+          lightRadius: 5, // 5x5 area lighting (same as torches)
+          lightIntensity: 0.6 // Same intensity as torches
+        }
+        })
+      });
+
+    // Register portal as light source with lighting system
+    if (this.lightingSystem) {
+      this.lightingSystem.addPortal(worldX, worldY);
+      console.log(`🚪 Portal registered with lighting system at tile (${worldX}, ${worldY})`);
+    } else {
+      console.warn(`⚠️ No lighting system available to register portal at tile (${worldX}, ${worldY})`);
+    }
+
+    // Set the portal tile itself to full brightness immediately
+    tile.effectiveLightLevel = Math.min(1.0, 0.0 + 0.6); // Base light + full intensity
+    console.log(`💡 Portal tile (${worldX}, ${worldY}) set to full brightness: ${tile.effectiveLightLevel}`);
+
+    // Defer lighting updates for surrounding tiles to avoid circular dependency during tile generation
+    this.deferLightingUpdate(worldX, worldY, 0.6, 2.5);
+
+      this.portalGenerated = true; // Mark portal as generated
     console.log(`🚪 Spawned dungeon portal at tile (${worldX}, ${worldY}) - distance ${distanceFromEntrance.toFixed(1)} from entrance`);
+  }
+
+      /**
+   * Update light levels for tiles around a light source
+   */
+  private updateSurroundingTileLightLevels(centerX: number, centerY: number, intensity: number, radius: number): void {
+    const radiusCeil = Math.ceil(radius);
+
+    for (let dx = -radiusCeil; dx <= radiusCeil; dx++) {
+      for (let dy = -radiusCeil; dy <= radiusCeil; dy++) {
+        const tileX = centerX + dx;
+        const tileY = centerY + dy;
+
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= radius) {
+          // Only update existing tiles - don't generate new ones to avoid circular dependency
+          const tile = this.getExistingDungeonTile(tileX, tileY);
+          if (tile) {
+            // Check if this tile contains a portal or torch (light source)
+            const isLightSource = this.tileContainsLightSource(tile);
+
+            // Calculate light falloff
+            const falloff = 1.0 - (distance / radius);
+            const lightBonus = intensity * falloff;
+
+            // Light source tiles get full intensity regardless of distance
+            const baseLightLevel = 0.0; // Dungeon base light
+            let newEffectiveLight: number;
+
+            if (isLightSource && (tileX === centerX && tileY === centerY)) {
+              // This is the light source tile itself - give it full brightness
+              newEffectiveLight = Math.min(1.0, baseLightLevel + intensity);
+              console.log(`💡 Light source tile (${tileX}, ${tileY}) - Full intensity: ${intensity}, effective=${newEffectiveLight.toFixed(2)}`);
+    } else {
+              // This is a surrounding tile - apply falloff
+              newEffectiveLight = Math.min(1.0, baseLightLevel + lightBonus);
+              console.log(`🔆 Updated tile (${tileX}, ${tileY}) light: distance=${distance.toFixed(2)}, falloff=${falloff.toFixed(2)}, bonus=${lightBonus.toFixed(2)}, effective=${newEffectiveLight.toFixed(2)}`);
+            }
+
+            tile.effectiveLightLevel = Math.max(tile.effectiveLightLevel ?? 0, newEffectiveLight);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if a tile contains a light source (portal only in dungeons)
+   */
+  private tileContainsLightSource(tile: Tile): boolean {
+    if (!tile.villageStructures) return false;
+
+    return tile.villageStructures.some(structure => {
+      const poi = structure.poi;
+      if (!poi) return false;
+
+      // Check for portal only - no torches in dungeons
+      if (poi.type === 'dungeon_portal' || structure.type === 'dungeon_portal') {
+        return true;
+      }
+
+      return false;
+    });
+  }
+
+    /**
+   * Get an existing dungeon tile without generating new chunks
+   */
+  private getExistingDungeonTile(worldX: number, worldY: number): Tile | null {
+    const chunkX = Math.floor(worldX / 16);
+    const chunkY = Math.floor(worldY / 16);
+    const chunkKey = `${chunkX},${chunkY}`;
+
+    const chunk = this.dungeonChunks.get(chunkKey);
+    if (!chunk) {
+      return null; // Don't generate new chunks
+    }
+
+    const localX = worldX - chunkX * 16;
+    const localY = worldY - chunkY * 16;
+
+    if (localX < 0 || localX >= 16 || localY < 0 || localY >= 16) {
+      return null;
+    }
+
+    return chunk.tiles[localY]?.[localX] ?? null;
+  }
+
+  /**
+   * Defer lighting updates to avoid circular dependency during tile generation
+   */
+  private deferLightingUpdate(x: number, y: number, intensity: number, radius: number): void {
+    this.pendingLightingUpdates.push({ x, y, intensity, radius });
+  }
+
+  /**
+   * Process all pending lighting updates
+   */
+  private processPendingLightingUpdates(): void {
+    for (const update of this.pendingLightingUpdates) {
+      this.updateSurroundingTileLightLevels(update.x, update.y, update.intensity, update.radius);
+    }
+    this.pendingLightingUpdates = [];
   }
 
   private spawnMonster(tile: Tile, worldX: number, worldY: number, distanceFromEntrance: number): boolean {
@@ -262,18 +466,64 @@ export class Dungeon {
       return false; // Too close to another monster
     }
 
-    const monsterType = this.selectDungeonMonster();
-    const monster = new NPC({
-      type: monsterType,
-      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-      aggressive: true
+        const monsterType = this.selectDungeonMonster();
+    const npc = new NPC({
+          type: monsterType,
+          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      aggressive: true,
+      health: this.getMonsterHealth(monsterType)
     });
 
-    tile.villageStructures = tile.villageStructures ?? [];
-    tile.villageStructures.push({
-      type: monsterType,
-      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-      npc: monster
+    // Initialize monster inventory
+    this.initializeMonsterInventory(npc, monsterType);
+
+    // Set up collision detection for dungeon movement
+    npc.setTileCollisionCallback((position: Position) => {
+      const tileX = Math.floor(position.x / this.TILE_SIZE);
+      const tileY = Math.floor(position.y / this.TILE_SIZE);
+      const tile = this.getTile(tileX, tileY);
+
+      if (!tile) {
+        return true; // Treat invalid tiles as occupied
+      }
+
+      // Check for impassable terrain (STONE tiles block movement in dungeons)
+      if (tile.value === 'STONE') {
+        return true;
+      }
+
+      // Check if this tile is occupied by the player
+      if (this.currentPlayerPosition) {
+        const playerTileX = Math.floor(this.currentPlayerPosition.x / this.TILE_SIZE);
+        const playerTileY = Math.floor(this.currentPlayerPosition.y / this.TILE_SIZE);
+        if (playerTileX === tileX && playerTileY === tileY) {
+          return true; // Player is on this tile
+        }
+      }
+
+      // Check for village structures (POIs and NPCs)
+      if (tile.villageStructures) {
+        for (const structure of tile.villageStructures) {
+          // Check for impassable POIs
+          if (structure.poi && !structure.poi.passable) {
+            return true;
+          }
+          // Check for living NPCs (excluding self by position comparison)
+          if (structure.npc && !structure.npc.isDead() &&
+              (structure.npc.position.x !== npc.position.x || structure.npc.position.y !== npc.position.y)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+        });
+
+        tile.villageStructures = tile.villageStructures ?? [];
+        tile.villageStructures.push({
+          type: monsterType,
+          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+      npc: npc // Use the actual NPC instance directly instead of wrapping it
     });
 
     // Track spawned monster for spacing
@@ -281,7 +531,7 @@ export class Dungeon {
 
     // Reduced logging for performance
     if (Math.random() < 0.1) { // Only log 10% of spawns to reduce console spam
-      console.log(`👹 Spawned ${monsterType} at distance ${distanceFromEntrance.toFixed(1)} from entrance`);
+        console.log(`👹 Spawned ${monsterType} at distance ${distanceFromEntrance.toFixed(1)} from entrance`);
     }
 
     return true;
@@ -295,23 +545,23 @@ export class Dungeon {
 
     // Generate deterministic chest inventory
     const chestSeed = entranceX * 1000 + entranceY + worldX + worldY;
-    const chestInventory = this.generateRareChestInventory(distanceFromEntrance, chestSeed);
+      const chestInventory = this.generateRareChestInventory(distanceFromEntrance, chestSeed);
 
-    tile.villageStructures = tile.villageStructures ?? [];
-    tile.villageStructures.push({
-      type: 'rare_chest',
-      position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-      poi: new POI({
+      tile.villageStructures = tile.villageStructures ?? [];
+      tile.villageStructures.push({
         type: 'rare_chest',
         position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
-        interactable: true,
-        passable: false,
-        customData: {
-          inventory: chestInventory,
-          chestId: `chest_${entranceX}_${entranceY}_${worldX}_${worldY}` // Unique ID for save/load
-        }
-      })
-    });
+        poi: new POI({
+          type: 'rare_chest',
+          position: { x: worldX * this.TILE_SIZE, y: worldY * this.TILE_SIZE },
+          interactable: true,
+          passable: false,
+          customData: {
+            inventory: chestInventory,
+            chestId: `chest_${entranceX}_${entranceY}_${worldX}_${worldY}` // Unique ID for save/load
+          }
+        })
+      });
 
     // Track spawned chest for spacing
     this.spawnedChests.add(`${worldX},${worldY}`);
@@ -366,6 +616,94 @@ export class Dungeon {
     const monsters = ['orc', 'skeleton', 'goblin', 'archer_goblin', 'club_goblin', 'farmer_goblin', 'orc_shaman', 'spear_goblin', 'slime'] as const;
     const randomIndex = Math.floor(Math.random() * monsters.length);
     return monsters[randomIndex] ?? 'goblin'; // Fallback to goblin if index is invalid
+  }
+
+  private getMonsterHealth(monsterType: string): number {
+    switch (monsterType) {
+      case 'orc': return 120;
+      case 'skeleton': return 40;
+      case 'goblin': return 40;
+      case 'archer_goblin': return 45;
+      case 'club_goblin': return 50;
+      case 'farmer_goblin': return 35;
+      case 'orc_shaman': return 80;
+      case 'spear_goblin': return 45;
+      case 'slime': return 40;
+      default: return 40;
+    }
+  }
+
+  private initializeMonsterInventory(npc: NPC, monsterType: string): void {
+    // Monsters carry loot similar to rare chests - they're essentially mobile treasure
+
+    // Base dungeon loot - ores and materials (like rare chests)
+    npc.inventory.addItem('copper_ore', Math.floor(Math.random() * 3) + 1);
+    npc.inventory.addItem('coal', Math.floor(Math.random() * 2) + 1);
+
+    // Add bones for all monsters (classic dungeon drop)
+    npc.inventory.addItem('bone', Math.floor(Math.random() * 5) + 1);
+
+    // Better loot based on monster type (stronger monsters = better loot)
+    switch (monsterType) {
+      case 'orc':
+      case 'orc_shaman':
+        // Orcs are strong - give them rare materials
+        if (Math.random() < 0.4) npc.inventory.addItem('iron_ore', Math.floor(Math.random() * 2) + 1);
+        if (Math.random() < 0.3) npc.inventory.addItem('silver_ore', 1);
+        if (Math.random() < 0.2) npc.inventory.addItem('gold_ore', 1);
+        break;
+
+      case 'skeleton':
+        // Skeletons have ancient treasures
+        if (Math.random() < 0.3) npc.inventory.addItem('iron_ore', 1);
+        if (Math.random() < 0.2) npc.inventory.addItem('gold_ingot', 1);
+        break;
+
+      case 'goblin':
+      case 'archer_goblin':
+      case 'club_goblin':
+      case 'farmer_goblin':
+      case 'spear_goblin':
+        // Goblins hoard shiny things
+        if (Math.random() < 0.3) npc.inventory.addItem('iron_ore', 1);
+        if (Math.random() < 0.15) npc.inventory.addItem('silver_ore', 1);
+        break;
+
+      case 'slime':
+        // Slimes absorb materials from the dungeon
+        if (Math.random() < 0.2) npc.inventory.addItem('iron_ore', 1);
+        npc.inventory.addItem('monster_drop', 1); // Special slime drop
+        break;
+    }
+
+    // Random chance for rare materials (like rare chests)
+    if (Math.random() < 0.1) {
+      npc.inventory.addItem('gold_ingot', 1);
+    }
+  }
+
+  private hasNearbySpawnedMonster(worldX: number, worldY: number, radius: number): boolean {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (this.spawnedMonsters.has(`${worldX + dx},${worldY + dy}`)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private hasNearbySpawnedChest(worldX: number, worldY: number, radius: number): boolean {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (this.spawnedChests.has(`${worldX + dx},${worldY + dy}`)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private generateRareChestInventory(distanceFromEntrance: number, seed: number): (InventoryItem | null)[] {
@@ -503,8 +841,8 @@ export class Dungeon {
           for (const structure of tile.villageStructures) {
             if (structure.npc && !structure.npc.isDead()) {
               // Render health bar only if NPC is alive (health > 0) and damaged
-              if (structure.npc.getHealth() > 0 && structure.npc.getHealth() < structure.npc.getMaxHealth()) {
-                this.renderHealthBar(ctx, screenTileX + 1, screenTileY + 1, structure.npc.getHealth(), structure.npc.getMaxHealth());
+              if (structure.npc.health > 0 && structure.npc.health < structure.npc.maxHealth) {
+                this.renderHealthBar(ctx, screenTileX + 1, screenTileY + 1, structure.npc.health, structure.npc.maxHealth);
               }
             }
           }
@@ -531,19 +869,26 @@ export class Dungeon {
     // Get or generate dungeon tile at world coordinates
     const chunkX = Math.floor(x / 16);
     const chunkY = Math.floor(y / 16);
-    const localX = x - (chunkX * 16);
-    const localY = y - (chunkY * 16);
+
+    // Handle negative coordinates properly by using modulo for local coordinates
+    let localX = x % 16;
+    let localY = y % 16;
+
+    // JavaScript modulo can return negative values, so normalize to positive
+    if (localX < 0) localX += 16;
+    if (localY < 0) localY += 16;
 
     const chunk = this.getDungeonChunk(chunkX, chunkY) ?? this.generateDungeonChunk(chunkX, chunkY, 16, entrancePosition);
 
-    return chunk.tiles[localY]?.[localX];
+    const tile = chunk.tiles[localY]?.[localX];
+    return tile ?? undefined;
   }
 
   private renderDungeonTile(ctx: CanvasRenderingContext2D, tile: Tile, x: number, y: number): void {
     const tileX = x - (this.TILE_SIZE / 2);
     const tileY = y - (this.TILE_SIZE / 2);
 
-    // Render background color with 1px border gap (black background shows through)
+    // Render background color with 1px border gap (black background shows through) - same as World class
     ctx.fillStyle = this.getDungeonTileColor(tile.value);
     ctx.fillRect(tileX + 1, tileY + 1, this.TILE_SIZE - 2, this.TILE_SIZE - 2);
 
@@ -551,14 +896,14 @@ export class Dungeon {
     if (tile.villageStructures) {
       for (const structure of tile.villageStructures) {
         // Render POIs first (chests, portals, etc.)
-        if (structure.poi) {
+        if (structure.poi?.render) {
           structure.poi.render(ctx, tileX + 1, tileY + 1);
         }
       }
 
       // Render NPCs on top of POIs (sprites only, no health bars)
       for (const structure of tile.villageStructures) {
-        if (structure.npc && !structure.npc.isDead()) {
+        if (structure.npc && !structure.npc.isDead() && structure.npc.renderSpriteOnly) {
           structure.npc.renderSpriteOnly(ctx, tileX + 1, tileY + 1);
         }
       }
@@ -567,9 +912,9 @@ export class Dungeon {
 
   private getDungeonTileColor(tileType: string): string {
     switch (tileType) {
-      case 'STONE': return '#808080';
+      case 'STONE': return '#000000'; // Black for underground stone walls
       case 'COBBLESTONE': return '#A9A9A9';
-      case 'VOID': return '#000000';
+      case 'DIRT': return '#696969';
       default: return '#333333';
     }
   }
@@ -591,9 +936,16 @@ export class Dungeon {
       this.spawnedMonsters.clear();
       this.spawnedChests.clear();
 
-      // Clear cached chunks when entering a new dungeon to ensure fresh generation
-      this.dungeonChunks.clear();
-      this.dungeonNames.clear();
+    // Clear cached chunks when entering a new dungeon to ensure fresh generation
+    this.dungeonChunks.clear();
+    this.dungeonNames.clear();
+
+      // Clear portal positions from lighting system when entering new dungeon
+      if (this.lightingSystem) {
+        this.lightingSystem.clearPortals();
+        // Also clear any torch positions to ensure only portals provide light in dungeons
+        this.lightingSystem.clearTorches();
+      }
 
       console.log(`🏚️ Entering new dungeon at ${position ? `(${position.x}, ${position.y})` : 'null'} - cleared caches`);
     } else {
@@ -648,70 +1000,6 @@ export class Dungeon {
     }
   }
 
-  private hasNearbyMonster(centerX: number, centerY: number, radius: number): boolean {
-    // Check in a radius around the center position for existing monsters
-    for (let x = centerX - radius; x <= centerX + radius; x++) {
-      for (let y = centerY - radius; y <= centerY + radius; y++) {
-        const tile = this.getTile(x, y);
-        if (tile?.villageStructures) {
-          for (const structure of tile.villageStructures) {
-            if (structure.npc && !structure.npc.isDead()) {
-              return true; // Found a nearby monster
-            }
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  private hasNearbyChest(centerX: number, centerY: number, radius: number): boolean {
-    // Check in a radius around the center position for existing chests
-    for (let x = centerX - radius; x <= centerX + radius; x++) {
-      for (let y = centerY - radius; y <= centerY + radius; y++) {
-        const tile = this.getTile(x, y);
-        if (tile?.villageStructures) {
-          for (const structure of tile.villageStructures) {
-            if (structure.poi && structure.poi.type === 'rare_chest') {
-              return true; // Found a nearby chest
-            }
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  private hasNearbySpawnedMonster(centerX: number, centerY: number, radius: number): boolean {
-    // Check in a radius around the center position for already spawned monsters
-    for (let x = centerX - radius; x <= centerX + radius; x++) {
-      for (let y = centerY - radius; y <= centerY + radius; y++) {
-        // Skip center tile
-        if (x === centerX && y === centerY) continue;
-
-        if (this.spawnedMonsters.has(`${x},${y}`)) {
-          return true; // Found a monster nearby
-        }
-      }
-    }
-    return false;
-  }
-
-  private hasNearbySpawnedChest(centerX: number, centerY: number, radius: number): boolean {
-    // Check in a radius around the center position for already spawned chests
-    for (let x = centerX - radius; x <= centerX + radius; x++) {
-      for (let y = centerY - radius; y <= centerY + radius; y++) {
-        // Skip center tile
-        if (x === centerX && y === centerY) continue;
-
-        if (this.spawnedChests.has(`${x},${y}`)) {
-          return true; // Found a chest nearby
-        }
-      }
-    }
-    return false;
-  }
-
   public getTile(tileX: number, tileY: number): Tile | undefined {
     return this.getDungeonTile(tileX, tileY, this.currentEntrancePosition ?? undefined);
   }
@@ -720,220 +1008,152 @@ export class Dungeon {
     return this.portalPosition;
   }
 
+  /**
+   * Update the current player position for NPC collision detection
+   */
+  public setPlayerPosition(playerPosition: Position): void {
+    this.currentPlayerPosition = playerPosition;
+  }
+
   public update(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[], camera?: Camera): void {
     if (!playerPosition || !camera) return;
 
-    // Calculate view radius in tiles based on camera dimensions (like world system)
-    // Add buffer for smooth transitions
-    const tileSize = this.TILE_SIZE;
-    const viewWidthInTiles = Math.ceil(camera.viewWidth / tileSize) + 5; // +5 tile buffer
-    const viewHeightInTiles = Math.ceil(camera.viewHeight / tileSize) + 5; // +5 tile buffer
-    const viewRadiusInTiles = Math.max(viewWidthInTiles, viewHeightInTiles) / 2;
+    // Update player position for NPC collision detection
+    this.setPlayerPosition(playerPosition);
 
-    // Collect all NPCs and village buildings for flocking algorithm (like world system)
-    const allNPCs: NPC[] = [];
-    const allVillageBuildings: Position[] = [];
-    const npcsToUpdate: { npc: NPC; tileX: number; tileY: number }[] = [];
+    // Track NPCs that need to move between tiles
+    const npcsToMove: Array<{
+      npc: NPC;
+      structure: DungeonStructure;
+      oldTileX: number;
+      oldTileY: number;
+      newTileX: number;
+      newTileY: number;
+    }> = [];
 
-    // Search much larger area around player to find ALL dungeon NPCs
-    const playerTileX = Math.floor(playerPosition.x / this.TILE_SIZE);
-    const playerTileY = Math.floor(playerPosition.y / this.TILE_SIZE);
-
-    // First pass: collect ALL NPCs from entire dungeon area (like world system)
-    // Use a large search radius to find all NPCs for flocking algorithm
-    const searchRadiusInTiles = 75; // Large radius to find all NPCs in dungeon
-    for (let dx = -searchRadiusInTiles; dx <= searchRadiusInTiles; dx++) {
-      for (let dy = -searchRadiusInTiles; dy <= searchRadiusInTiles; dy++) {
-        const tileX = playerTileX + dx;
-        const tileY = playerTileY + dy;
+    // Update NPCs in visible area and track movement
+    const viewRadius = 20;
+    for (let dx = -viewRadius; dx <= viewRadius; dx++) {
+      for (let dy = -viewRadius; dy <= viewRadius; dy++) {
+        const tileX = Math.floor(playerPosition.x / this.TILE_SIZE) + dx;
+        const tileY = Math.floor(playerPosition.y / this.TILE_SIZE) + dy;
         const tile = this.getTile(tileX, tileY);
 
         if (tile?.villageStructures) {
           for (const structure of tile.villageStructures) {
-            // Collect ALL NPCs for flocking algorithm
-            if (structure.npc && !structure.npc.isDead()) {
-              allNPCs.push(structure.npc);
+            if (structure.npc?.update && 'position' in structure.npc) {
+              const npc = structure.npc as NPC; // Type assertion to access NPC properties
 
-              // Check if NPC is within camera view radius (like world system)
-              const npcDistance = Math.sqrt(
-                Math.pow(structure.npc.position.x - playerPosition.x, 2) +
-                Math.pow(structure.npc.position.y - playerPosition.y, 2)
-              ) / this.TILE_SIZE;
+              // Store old position before update
+              const oldTileX = Math.floor(npc.position.x / this.TILE_SIZE);
+              const oldTileY = Math.floor(npc.position.y / this.TILE_SIZE);
 
-              // Update NPCs within camera view radius (camera-based, not player-proximity)
-              if (npcDistance <= viewRadiusInTiles) {
-                npcsToUpdate.push({ npc: structure.npc, tileX, tileY });
+              // Update the NPC
+              npc.update(deltaTime, playerPosition, playerInventory ?? []);
+
+              // Check if NPC moved to a different tile
+              const newTileX = Math.floor(npc.position.x / this.TILE_SIZE);
+              const newTileY = Math.floor(npc.position.y / this.TILE_SIZE);
+
+              if (oldTileX !== newTileX || oldTileY !== newTileY) {
+                // Check if monster NPC is trying to move to player's tile
+                if (npc.category === 'monster' && newTileX === Math.floor(playerPosition.x / this.TILE_SIZE) && newTileY === Math.floor(playerPosition.y / this.TILE_SIZE)) {
+                  // Prevent monster from moving to player's tile - revert position
+                  npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+                  console.log(`🚫 Prevented ${npc.type} from moving to player tile (${Math.floor(playerPosition.x / this.TILE_SIZE)}, ${Math.floor(playerPosition.y / this.TILE_SIZE)})`);
+                  continue; // Skip processing this movement
+                }
+
+                // NPC moved to a different tile, queue for movement handling
+                npcsToMove.push({
+                  npc,
+                  structure: structure as DungeonStructure,
+                  oldTileX,
+                  oldTileY,
+                  newTileX,
+                  newTileY
+                });
               }
             }
-
-            // Collect structures (for trader behavior)
-            if (structure.poi && structure.poi.type !== 'dungeon_portal') {
-              allVillageBuildings.push(structure.position);
-            }
           }
         }
       }
     }
 
-    // Clear movement intentions from previous update cycle (like world system)
-    const movementIntentions = new Map<string, NPC>(); // tileKey -> NPC that wants to move there
-
-    // First phase: Collect movement intentions from all NPCs (like world system)
-    for (const npcData of npcsToUpdate) {
-      const { npc } = npcData;
-      const pos = playerPosition;
-      const inventory = playerInventory ?? [];
-
-      // Get nearby NPCs within reasonable distance (10 tiles) for flocking
-      const nearbyNPCs = allNPCs.filter(otherNPC => {
-        if (otherNPC === npc) return false;
-        const distance = Math.sqrt(
-          Math.pow(otherNPC.position.x - npc.position.x, 2) +
-          Math.pow(otherNPC.position.y - npc.position.y, 2)
-        ) / 16;
-        return distance <= 10; // Within 10 tiles
-      });
-
-      // Get movement intention for this NPC
-      const movementIntention = npc.getMovementIntention(pos, inventory, nearbyNPCs);
-      if (movementIntention) {
-        const targetTileX = Math.floor(movementIntention.x / this.TILE_SIZE);
-        const targetTileY = Math.floor(movementIntention.y / this.TILE_SIZE);
-        const targetTileKey = `${targetTileX},${targetTileY}`;
-        movementIntentions.set(targetTileKey, npc);
-      }
+    // Process NPC movements between tiles
+    for (const moveData of npcsToMove) {
+      this.moveNPCBetweenTiles(moveData.structure, moveData.oldTileX, moveData.oldTileY, moveData.newTileX, moveData.newTileY);
     }
-
-    // Second phase: Update NPCs with movement intentions registered (like world system)
-    for (const npcData of npcsToUpdate) {
-      const { npc, tileX, tileY } = npcData;
-      const pos = playerPosition;
-      const inventory = playerInventory ?? [];
-
-      // Get nearby NPCs within reasonable distance (10 tiles)
-      const nearbyNPCs = allNPCs.filter(otherNPC => {
-        if (otherNPC === npc) return false;
-        const distance = Math.sqrt(
-          Math.pow(otherNPC.position.x - npc.position.x, 2) +
-          Math.pow(otherNPC.position.y - npc.position.y, 2)
-        ) / 16;
-        return distance <= 10; // Within 10 tiles
-      });
-
-      // Get nearby village buildings within reasonable distance (15 tiles)
-      const nearbyBuildings = allVillageBuildings.filter(building => {
-        const distance = Math.sqrt(
-          Math.pow(building.x - npc.position.x, 2) +
-          Math.pow(building.y - npc.position.y, 2)
-        ) / 16;
-        return distance <= 15; // Within 15 tiles
-      });
-
-      // Store old position for movement tracking
-      const oldTileX = Math.floor(npc.position.x / this.TILE_SIZE);
-      const oldTileY = Math.floor(npc.position.y / this.TILE_SIZE);
-
-      // Set tile collision callback for dungeon tiles
-      npc.setTileCollisionCallback((position: Position) => {
-        const checkTileX = Math.floor(position.x / this.TILE_SIZE);
-        const checkTileY = Math.floor(position.y / this.TILE_SIZE);
-
-        return this.isDungeonTileOccupied(checkTileX, checkTileY, pos, npc);
-      });
-
-      // Set speculative movement callback for coordination (enhanced with movement intentions)
-      npc.setSpeculativeMovementCallback((position: Position, movingNPC: NPC) => {
-        const targetTileX = Math.floor(position.x / this.TILE_SIZE);
-        const targetTileY = Math.floor(position.y / this.TILE_SIZE);
-        const targetTileKey = `${targetTileX},${targetTileY}`;
-
-        // Check if there's an NPC on the target tile
-        const targetTile = this.getTile(targetTileX, targetTileY);
-        if (!targetTile?.villageStructures) return false;
-
-        for (const structure of targetTile.villageStructures) {
-          if (structure.npc && !structure.npc.isDead() && structure.npc !== movingNPC) {
-            // Check if the other NPC has movement intentions that conflict
-            const movingNPCTileX = Math.floor(movingNPC.position.x / this.TILE_SIZE);
-            const movingNPCTileY = Math.floor(movingNPC.position.y / this.TILE_SIZE);
-            const movingNPCTileKey = `${movingNPCTileX},${movingNPCTileY}`;
-
-            // Allow movement if the other NPC wants to move to our current tile (swap)
-            const otherNPCIntention = movementIntentions.get(movingNPCTileKey);
-            if (otherNPCIntention === structure.npc) {
-              console.log(`🏚️ Speculative movement: Allowing ${movingNPC.type} to swap with ${structure.npc.type}`);
-              return true;
-            }
-          }
-        }
-
-        return false;
-      });
-
-      // Update NPC with flocking behavior
-      npc.update(deltaTime, pos, inventory, nearbyNPCs, nearbyBuildings);
-
-      // Check if NPC moved to a different tile
-      const newTileX = Math.floor(npc.position.x / this.TILE_SIZE);
-      const newTileY = Math.floor(npc.position.y / this.TILE_SIZE);
-
-      if (oldTileX !== newTileX || oldTileY !== newTileY) {
-        // NPC moved to a different tile, update tile occupancy
-        console.log(`🏚️ ${npc.type} moved from (${oldTileX}, ${oldTileY}) to (${newTileX}, ${newTileY}) in dungeon`);
-        this.moveNPCBetweenTiles(npc, oldTileX, oldTileY, newTileX, newTileY);
-      }
-    }
-
-    console.log(`🏚️ Dungeon update: Found ${npcsToUpdate.length} NPCs to update, ${allNPCs.length} total NPCs`);
   }
 
-  private moveNPCBetweenTiles(npc: NPC, oldTileX: number, oldTileY: number, newTileX: number, newTileY: number): void {
-    // Trust the NPC's movement logic - if it moved successfully, update tile structures
-    // The NPC has already done collision detection, so don't second-guess it
-
-    // Remove NPC from old tile
+  /**
+   * Move an NPC from one tile to another, updating the cached dungeon tile data
+   */
+  private moveNPCBetweenTiles(npcStructure: DungeonStructure, oldTileX: number, oldTileY: number, newTileX: number, newTileY: number): void {
+    // Get both tiles
     const oldTile = this.getTile(oldTileX, oldTileY);
-    if (oldTile?.villageStructures) {
-      const index = oldTile.villageStructures.findIndex(s => s.npc === npc);
-      if (index !== -1) {
-        const npcStructure = oldTile.villageStructures[index];
-        oldTile.villageStructures.splice(index, 1);
+    const newTile = this.getTile(newTileX, newTileY);
 
-        // Add NPC to new tile (create as passable tunnel tile if it doesn't exist)
-        let newTile = this.getTile(newTileX, newTileY);
-        if (!newTile || newTile.value === 'VOID') {
-          // Create a passable tile for the NPC to move on
-          newTile = {
-            x: newTileX,
-            y: newTileY,
-            value: 'STONE',
-            height: 0.5,
-            temperature: 0.3,
-            humidity: 0.7,
-            interacted: false
-          };
+    if (!oldTile || !newTile) {
+      // Invalid tiles - revert NPC position
+      if (npcStructure.npc) {
+        npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+        npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+      }
+      return;
+    }
 
-          // Update the cached dungeon tile
-          const chunkX = Math.floor(newTileX / 16);
-          const chunkY = Math.floor(newTileY / 16);
-          const localX = newTileX - (chunkX * 16);
-          const localY = newTileY - (chunkY * 16);
-          const chunk = this.getDungeonChunk(chunkX, chunkY);
-          if (chunk?.tiles[localY]) {
-            chunk.tiles[localY][localX] = newTile;
+    // Check if the new tile is passable for NPCs
+    if (newTile.value === 'STONE') {
+      // Can't move to stone tiles - revert position
+      if (npcStructure.npc) {
+        npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+        npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+      }
+      return;
+    }
+
+    // Check if the new tile is already occupied by another NPC or impassable POI
+    if (newTile.villageStructures) {
+      for (const structure of newTile.villageStructures) {
+        // Check for impassable POIs
+        if (structure.poi && !structure.poi.passable) {
+          // Can't move to occupied tile - revert position
+          if (npcStructure.npc) {
+            npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+            npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
           }
+          return;
         }
-
-        // Ensure villageStructures array exists
-        newTile.villageStructures ??= [];
-
-        // Update the structure's position to match the NPC's actual position
-        npcStructure!.position = { x: npc.position.x, y: npc.position.y };
-        newTile.villageStructures.push(npcStructure!);
-
-        console.log(`🏚️ Successfully moved ${npc.type} from (${oldTileX}, ${oldTileY}) to (${newTileX}, ${newTileY})`);
+        // Check for other living NPCs (excluding self)
+        if (structure.npc && !structure.npc.isDead() && structure.npc !== npcStructure.npc) {
+          // Can't move to occupied tile - revert position
+          if (npcStructure.npc) {
+            npcStructure.npc.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+            npcStructure.position = { x: oldTileX * this.TILE_SIZE, y: oldTileY * this.TILE_SIZE };
+          }
+          return;
+        }
       }
     }
+
+    // Remove NPC from old tile
+    if (oldTile.villageStructures) {
+      oldTile.villageStructures = oldTile.villageStructures.filter(
+        structure => structure.npc !== npcStructure.npc
+      );
+    }
+
+    // Add NPC to new tile
+    newTile.villageStructures = newTile.villageStructures ?? [];
+
+    // Update structure position to match new tile
+    npcStructure.position = { x: newTileX * this.TILE_SIZE, y: newTileY * this.TILE_SIZE };
+
+    // Add to new tile
+    newTile.villageStructures.push(npcStructure);
+
+    console.log(`🚶 Moved ${npcStructure.npc?.type} from tile (${oldTileX}, ${oldTileY}) to (${newTileX}, ${newTileY})`);
   }
 
   private isDungeonTileOccupied(tileX: number, tileY: number, playerPosition: Position, excludeNPC?: NPC): boolean {
@@ -942,8 +1162,8 @@ export class Dungeon {
       return true; // Treat invalid tiles as occupied
     }
 
-    // Check for impassable terrain (VOID tiles block movement in dungeons)
-    if (tile.value === 'VOID') {
+    // Check for impassable terrain (STONE tiles block movement in dungeons)
+    if (tile.value === 'STONE') {
       return true;
     }
 
@@ -961,7 +1181,7 @@ export class Dungeon {
         if (structure.poi && !structure.poi.passable) {
           return true;
         }
-        // Check for living NPCs (excluding the one we're checking for)
+        // Check for living NPCs (excluding the specified excludeNPC)
         if (structure.npc && !structure.npc.isDead() && structure.npc !== excludeNPC) {
           return true;
         }
@@ -969,5 +1189,185 @@ export class Dungeon {
     }
 
     return false;
+  }
+
+  /**
+   * Create a tombstone at the specified position with the given inventory
+   */
+  private createTombstone(position: Position, deadEntityType: string, inventory: (InventoryItem | null)[], deadEntityName?: string): void {
+    const tombstone = new Tombstone({
+      position,
+      inventory,
+      deadEntityType,
+      deadEntityName
+    });
+
+    const tileX = Math.floor(position.x / this.TILE_SIZE);
+    const tileY = Math.floor(position.y / this.TILE_SIZE);
+    const tile = this.getTile(tileX, tileY);
+
+    if (tile) {
+      // Add tombstone as a POI to the tile
+      tile.villageStructures = tile.villageStructures ?? [];
+      tile.villageStructures.push({
+        type: 'tombstone',
+        position,
+        poi: new POI({
+          type: 'tombstone',
+          position,
+          interactable: true,
+          passable: false,
+          customData: {
+            tombstoneVariant: tombstone.tombstoneVariant,
+            inventory: inventory,
+            deadEntityType: deadEntityType,
+            deadEntityName: deadEntityName
+          }
+        })
+      });
+
+      console.log(`💀 Created tombstone in dungeon at (${tileX}, ${tileY})`);
+    }
+  }
+
+  /**
+   * Handle player death in dungeon - create tombstone with player's inventory
+   */
+  public handlePlayerDeath(playerPosition: Position, playerInventory: (InventoryItem | null)[], playerName?: string): void {
+    // Create tombstone with player's inventory
+    this.createTombstone(
+      playerPosition,
+      'player',
+      playerInventory,
+      playerName ?? 'Hero'
+    );
+
+    console.log(`💀 Player died in dungeon! Tombstone created at (${Math.floor(playerPosition.x / this.TILE_SIZE)}, ${Math.floor(playerPosition.y / this.TILE_SIZE)})`);
+  }
+
+  /**
+   * Handle NPC death in dungeon - create tombstone with NPC's inventory
+   */
+  public handleNPCDeath(npc: NPCLike, npcPosition: Position): void {
+    // Create tombstone with NPC's inventory for traders and monsters
+    if (npc.category === 'friendly' || npc.category === 'monster') {
+      // Get NPC inventory if available
+      const npcInventory: (InventoryItem | null)[] = [];
+      if ('inventory' in npc && npc.inventory && typeof npc.inventory === 'object' && 'getItem' in npc.inventory) {
+        const inventory = npc.inventory as Inventory;
+        for (let i = 0; i < 9; i++) {
+          const item = inventory.getItem(i);
+          npcInventory.push(item);
+        }
+      }
+
+      this.createTombstone(
+        npcPosition,
+        npc.type,
+        npcInventory,
+        `${npc.type} Monster`
+      );
+
+      console.log(`💀 ${npc.type} died in dungeon! Tombstone created at (${Math.floor(npcPosition.x / this.TILE_SIZE)}, ${Math.floor(npcPosition.y / this.TILE_SIZE)})`);
+    }
+
+    // Remove the dead NPC from the tile
+    const tileX = Math.floor(npcPosition.x / this.TILE_SIZE);
+    const tileY = Math.floor(npcPosition.y / this.TILE_SIZE);
+    const tile = this.getTile(tileX, tileY);
+
+    if (tile?.villageStructures) {
+      tile.villageStructures = tile.villageStructures.filter(
+        structure => !(structure.npc && structure.npc.position.x === npcPosition.x && structure.npc.position.y === npcPosition.y)
+      );
+    }
+  }
+
+  /**
+   * Handle animal death in dungeon - add drops to player inventory
+   */
+  public handleAnimalDeath(npc: NPCLike, playerPosition: Position, playerInventory: Inventory): void {
+    console.log(`🐾 ${npc.type} died in dungeon - adding drops to player inventory`);
+
+    // Remove the dead NPC from the tile
+    const tileX = Math.floor(npc.position.x / this.TILE_SIZE);
+    const tileY = Math.floor(npc.position.y / this.TILE_SIZE);
+    const tile = this.getTile(tileX, tileY);
+
+    if (tile?.villageStructures) {
+      tile.villageStructures = tile.villageStructures.filter(
+        structure => !(structure.npc && structure.npc.position.x === npc.position.x && structure.npc.position.y === npc.position.y)
+      );
+    }
+  }
+
+  /**
+   * Get tombstone at specific coordinates
+   */
+  public getTombstoneAt(tileX: number, tileY: number): Tombstone | null {
+    const tile = this.getTile(tileX, tileY);
+    if (!tile?.villageStructures) return null;
+
+    for (const structure of tile.villageStructures) {
+      if (structure.type === 'tombstone' && structure.poi) {
+        // Create a temporary Tombstone object from the POI data
+        const tombstoneVariant = structure.poi.customData?.tombstoneVariant ?? 0;
+        const inventory = structure.poi.customData?.inventory as (InventoryItem | null)[] ?? [];
+        const deadEntityType = structure.poi.customData?.deadEntityType as string ?? 'unknown';
+        const deadEntityName = structure.poi.customData?.deadEntityName as string;
+
+        return new Tombstone({
+          position: structure.position,
+          inventory,
+          deadEntityType,
+          deadEntityName
+        });
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Remove tombstone from dungeon
+   */
+  public removeTombstone(tileX: number, tileY: number): boolean {
+    const tile = this.getTile(tileX, tileY);
+    if (!tile?.villageStructures) return false;
+
+    const tombstoneIndex = tile.villageStructures.findIndex(
+      structure => structure.type === 'tombstone'
+    );
+
+    if (tombstoneIndex !== -1) {
+      // Check if tombstone is empty before removing
+      const tombstone = this.getTombstoneAt(tileX, tileY);
+      if (tombstone?.isEmpty()) {
+        tile.villageStructures.splice(tombstoneIndex, 1);
+        if (tile.villageStructures.length === 0) {
+          delete tile.villageStructures;
+        }
+        console.log(`💀 Removed empty tombstone from dungeon at (${tileX}, ${tileY})`);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Update tombstone inventory in dungeon
+   */
+  public updateTombstoneInventory(tileX: number, tileY: number, inventory: (InventoryItem | null)[]): void {
+    const tile = this.getTile(tileX, tileY);
+    if (!tile?.villageStructures) return;
+
+    for (const structure of tile.villageStructures) {
+      if (structure.type === 'tombstone' && structure.poi) {
+        structure.poi.customData = structure.poi.customData ?? {};
+        structure.poi.customData.inventory = inventory;
+        console.log(`💾 Updated tombstone inventory in dungeon at (${tileX}, ${tileY})`);
+        break;
+      }
+    }
   }
 }

@@ -167,223 +167,97 @@ Generated based on temperature and humidity:
   - **Deterministic Behavior**: Movement decisions cached for 100ms to ensure consistent intention-execution matching
   - **Escape Mechanism**: Long-stuck animals (8+ seconds) get increased randomness to break deadlocks
 
+## 👤 **Player System**
+
+### **Player Name & Identity** - Enhanced December 2024
+- **URL Parameter Support**: Player name can be set via `playerName` URL parameter (e.g., `?playerName=Hero`)
+- **Default Name**: Players start with default name "Hero" if no URL parameter provided
+- **Name Display**: Player name shown in inventory UI and tombstone titles
+- **Character Limit**: Player names limited to 20 characters with alphanumeric characters, spaces, hyphens, and underscores
+- **Persistent Identity**: Player name used in tombstone creation across all environments
+
+### **Player Inventory System**
+- **Dual Layout**: Inventory UI shows player items (left) and character view with armor slots (right)
+- **Player Name Display**: Shows "Player: [Name]" at top of character section
+- **Full-Width Interface**: Uses entire canvas width when open
+- **Navigation**: Arrow keys move between inventory grid (0-8) and armor slots (9-15)
+- **Armor Organization**:
+  - **Column 1**: Head, Torso, Legs, Feet (slots 9-12)
+  - **Column 2**: Left Hand, Right Hand/Arms, Wearable (slots 13-15)
+
 ## 💀 **Death & Tombstone System**
 
+### **Player Death Mechanics**
+- **Health Regeneration**: Player regenerates 5 health/minute (base) or 15 health/minute (with magical items)
+  - **Combat State**: Health regeneration stops for 10 seconds after taking any damage
+  - **Death Condition**: When player health ≤ 0 in any environment (world, dungeon, mine)
+  - **Tombstone Creation**: Creates tombstone at exact death location with player's complete 9-slot inventory
+  - **Tombstone Title**: Shows player's actual name (e.g., "Hero's Grave" instead of generic "Player's Grave")
+  - **Tombstone Sprite**: Uses random sprite variant (0-7 from Tombstones.png)
+  - **Player Respawn**: Player respawns at world origin (0,0) with full health and empty inventory
+  - **Environment Reset**: Game automatically returns to world surface regardless of death location
+  - **Item Recovery**: Player must return to death location to retrieve items from tombstone
+
 ### **Entity Death Mechanics**
-- **Player Death**: When player health ≤ 0
-  - Creates tombstone at death location with player's complete 9-slot inventory
-  - Player respawns at world origin (0,0) with full health and empty inventory
-  - Player must retrieve items from tombstone by interacting with it
 - **Animal Death** (chicken, pig, sheep): When killed by player
   - Inventory items automatically transferred to player inventory
   - No tombstone created (animals consumed immediately)
-- **Trader/Monster Death**: When health ≤ 0
-  - Creates tombstone with NPC's 9-slot inventory
-  - Tombstone becomes interactable POI on the tile
-  - Original NPC removed from world
+
+- **Trader Death**: When trader health ≤ 0 from combat
+  - Creates tombstone with trader's 9-slot inventory at death location
+  - Tombstone title shows trader type (e.g., "Farmer Trader's Grave")
+  - Player can interact with tombstone to retrieve trader items
+
+- **Monster Death**: When monster health ≤ 0 from combat
+  - Creates tombstone with monster's inventory at death location
+  - Tombstone title shows monster type (e.g., "Orc Monster's Grave")
+  - Player can interact with tombstone to retrieve monster drops
+
+- **Bandit Death**: When bandit health ≤ 0 from combat (in mines)
+  - Creates tombstone with bandit's inventory at death location
+  - Tombstone title shows bandit type (e.g., "Farmer Bandit's Grave")
+  - Player can interact with tombstone to retrieve bandit items
 
 ### **Tombstone Interaction System**
-- **Activation**: Press `F` key while facing a tombstone to open inventory UI
-- **Navigation**: Use `Left/Right` arrow keys to navigate through 9 inventory slots
-- **Item Selection**: Selected slot highlighted with blue border
-- **Take Selected Item**: Press `X` key to take only the selected item
-- **Take All Items**: Press `Z` key to transfer all tombstone items to player inventory
-- **Close Interface**: Press `F` key again to close tombstone inventory UI
-- **Inventory Management**: Items stack with existing player inventory when possible
-- **Auto-Cleanup**: Tombstones automatically disappear when inventory becomes empty
+- **Unified UI**: Tombstones use same dual-inventory interface as chests
+- **Split-Screen Layout**: Player inventory (left 50%) and tombstone inventory (right 50%)
+- **Full Navigation**: Arrow keys provide complete 2D navigation between both inventories
+- **Cross-Inventory Movement**: Left/right arrows move between player and tombstone sides
+- **Smart Transfer**: X key transfers selected item, Z key transfers all items
+- **Visual Feedback**: Selected slots highlighted, real-time item counts displayed
+- **Automatic Cleanup**: Empty tombstones automatically removed from game world
+- **Multi-Environment Support**: Works identically in world, dungeons, and mines
 
-### **Tombstone UI Features**
-- **3x3 Grid Layout**: Tombstone inventory displayed in organized grid format
-- **Entity Identification**: Title shows deceased entity name (e.g., "Player's Tombstone", "Orc's Tombstone")
-- **Item Counter**: Real-time display of remaining items (e.g., "Items: 5/9")
-- **Visual Feedback**: Selected slot highlighted, item quantities displayed
-- **Bubble Design**: Modern rounded UI matching game's aesthetic
-- **Instruction Text**: Built-in help text showing available controls
+### **Tombstone Storage & Persistence**
+- **Environment-Specific Storage**: Tombstone data stored separately per environment type
+- **POI Integration**: Tombstones stored as POI structures in tile villageStructures arrays
+- **Inventory Preservation**: Complete 9-slot inventory data preserved in POI customData
+- **Metadata Storage**: Tombstone variant, dead entity type, and entity name stored
+- **Cross-Session Persistence**: Tombstone contents preserved across game sessions
+- **Smart Cleanup**: Empty tombstones automatically removed from all environments
 
-### **Tombstone System**
-- **Sprite Variants**: Random selection from 8 tombstone variants (Tombstones.png index 0-7)
-- **Inventory Storage**: Each tombstone holds 9 inventory slots from dead entity
-- **Position Tracking**: Tombstones placed at exact death location
-- **Automatic Cleanup**: Tombstones disappear when inventory becomes empty
-- **Naming**: Tombstones display entity type (e.g., "Player's Grave", "Orc Grave")
-
-### **NPC Inventory System**
-All NPCs now have 9-slot inventories with randomly generated items:
-
-**Animal Inventories**:
-- **Chicken**: 1-3 chicken_meat, 1-2 feather
-- **Pig**: 2-5 pork, 1-2 leather
-- **Sheep**: 1-3 mutton, 2-5 wool
-
-**Trader Inventories**:
-- **All Traders**: 5-14 gold, 1-3 bread, 1-2 potion
-
-**Monster Inventories**:
-- **Orcs/Goblins/Skeletons**: 1-3 bone, 0-1 dark_gem, 0-1 weapon_part
-
-**Slime Inventories**:
-- **All Slimes**: 2-6 slime, 1-3 blue_essence
-
-## 🏚️ **Dungeon System**
-
-### **Enhanced Dungeon Generation**
-- **Connected Tunnel System**: Uses entrance position to generate a single winding tunnel path
-- **Extended Main Tunnel**: Primary corridor extends up to 50 tiles from entrance using noise-based pathfinding
-- **Enhanced NPC Movement Space**: Significantly expanded passable areas for NPC movement throughout dungeons
-- **Moderate Branching**: Secondary tunnels (15-30 tiles) with 25% spawn chance for exploration variety
-- **Larger Size**: Total dungeon area approximately 500 tiles for substantial exploration
-- **Deterministic Generation**: Same entrance always generates same dungeon layout based on entrance world coordinates
-- **Monster Exclusion Zone**: 10x10 tile area around dungeon entrance prevents monster spawning for safe entry
-
-### **Enhanced Tunnel Architecture for NPC Movement**
-- **Entrance Area**: 8-tile radius around entrance guaranteed to be tunnel (increased from 5 tiles for safe spawn zone)
-- **Main Corridor**: Winding path up to 50 tiles deep using generous noise values < 0.5 (increased from 0.35)
-- **Branch Tunnels**: Enhanced paths (15-35 tiles) with noise values < 0.3 (increased from 0.2) and 25% spawn chance
-- **Room System**: New room areas (distance < 25, noise < 0.25) providing large movement spaces for NPCs
-- **Connecting Corridors**: Additional corridor system (distance < 40, noise < 0.15) linking rooms and branches
-- **Void Boundaries**: All non-tunnel areas are VOID tiles (impassable black areas)
-- **Mixed Flooring**: Random mix of STONE (60%) and COBBLESTONE (40%) for visual variety
-
-### **Camera-View-Based NPC Updates**
-The dungeon implements the same sophisticated NPC update system as the world:
-- **Camera-Based Radius**: NPCs updated within camera view + 5-tile buffer (adaptive to screen resolution)
-- **Performance Optimization**: Only visible NPCs are updated for smooth gameplay
-- **Two-Phase Movement**: Same advanced movement coordination as world system
-- **Flocking Algorithm**: All NPCs share movement intentions for deadlock resolution
-
-### **Rare Chest System**
-- **Maximum Limit**: Up to 10 rare chests per dungeon for balanced treasure distribution
-- **Even Distribution**: Grid-based spawning system (6-tile spacing) ensures chests are evenly distributed throughout dungeon
-- **High Spawn Rates**: 15% base chance for common chest generation throughout dungeon areas
-- **Distance Requirement**: Chests spawn 8+ tiles from entrance to avoid overcrowding entry area
-- **No Noise Threshold**: Simplified generation removes complex noise requirements for more reliable spawning
-- **Impassable Barriers**: Chests block both player and NPC movement
-- **Random Inventory Generation**: Each chest contains 0-7 randomly selected items:
-  - **Ores**: Copper ore (0-5), iron ore (0-3), gold ore (0-2), coal (0-4)
-  - **Precious Materials**: Silver ore (0-3), gold ingots (0-2)
-  - **Monster Parts**: Bones (0-15)
-- **Deterministic Content**: Same chest always contains same items based on entrance position seed
-- **Dual Inventory UI**: Player inventory (left 50%) and chest inventory (right 50%)
-- **Bidirectional Transfers**: Arrow keys navigate between inventories, X/Z keys transfer items
-- **Persistent Storage**: Chest inventories saved in tile cache data
-
-### **Portal Discovery System** - Enhanced December 2024
-- **Single Persistent Portal**: Exactly one portal spawns at the furthest accessible point (45-50 tiles from entrance)
-- **Deterministic Placement**: Portal spawns at the furthest valid tunnel location from entrance using noise-based selection
-- **Cached Position**: Portal location is permanently stored in dungeon tile cache data for consistency
-- **Cross-Session Persistence**: Portal remains in same location when re-entering the same dungeon entrance
-- **Console UI Integration**: Portal position displayed in console UI when in dungeon mode
-- **Famous Game Quotes**: Random selection from Zelda, Skyrim, D&D, Mario, Minecraft:
-  - "It's dangerous to go alone! Take this." (Zelda)
-  - "You have found something truly special!"
-  - "The portal shimmers with ancient magic..."
-  - "A gateway to adventure awaits!"
-- **Two-Stage Interaction**: First interaction shows discovery message, second interaction teleports
-- **Safe Return**: Portal returns player to nearest unoccupied tile near dungeon entrance
-- **Guaranteed Generation**: System ensures exactly one portal is generated per dungeon
-- **No "NOT FOUND" Display**: Console UI always shows portal location once generated
-
-### **Advanced Dungeon NPC Movement System**
-
-#### **Two-Phase Movement Coordination (Like World System)**
-The dungeon implements the same sophisticated flocking algorithm as the world system:
-- **Phase 1**: Collect movement intentions from ALL NPCs within 50-tile radius for coordination
-- **Phase 2**: Execute updates with registered movement intentions for deadlock resolution
-
-#### **Enhanced Search and Update Radius**
-- **NPC Collection Radius**: 50-tile radius to find ALL dungeon NPCs (expanded from 15 tiles)
-- **Update Radius**: 30-tile radius for actual NPC updates (expanded from 15 tiles)
-- **Flocking Coordination**: All NPCs share movement intentions for swapping and coordination
-- **Speculative Movement**: NPCs can coordinate to swap positions when blocked
-
-#### **Movement Intention System**
-- **Intention Collection**: NPCs declare movement targets before any actual movement
-- **Coordinated Swapping**: NPCs can swap positions when both want each other's tiles
-- **Chain Movement**: If one NPC wants to move away, others can coordinate to take their place
-- **Deterministic Behavior**: Movement decisions cached for 100ms to ensure consistent intention-execution matching
-- **Escape Mechanism**: Long-stuck NPCs (8+ seconds) get increased randomness to break deadlocks
-
-#### **Dungeon-Specific Collision System**
-- **VOID Tile Blocking**: Only VOID tiles and impassable structures block movement in dungeons
-- **World Content Isolation**: World trees, cactus, and world NPCs don't affect dungeon movement
-- **Dynamic Tile Creation**: System creates passable STONE tiles for NPCs when moving to VOID areas
-- **Automatic Cache Updates**: Dungeon tile cache automatically updates when NPCs create new passable areas
-
-### **Player Movement & Tile Validation**
-- **Rendering Mode-Based Movement**: Movement system automatically switches between world and dungeon tile checking
-- **Dungeon Movement Rules**: In dungeon mode, only VOID tiles and impassable structures block movement
-- **World Movement Rules**: In world mode, standard world passability rules apply (water, stone, trees, etc.)
-- **Isolated Systems**: World content (trees, cactus, world NPCs) completely isolated from dungeon movement
-- **Smart Tile Detection**: System automatically uses appropriate tile source based on camera rendering mode
-
-### **Dungeon Entrances & Exits**
-- **Surface Entrance**: POI remains at exact world coordinates in both world and dungeon views
-- **Entrance Interaction**: F key switches camera to dungeon rendering mode
-- **Smart Player Spawning**: Player spawns at nearest unoccupied tile to entrance (searches up to 10 tiles)
-- **Single Portal Generation**: Exactly one portal spawns 45-50 tiles from entrance (30% chance per valid tile)
-- **Guaranteed Exit**: Portal generation ensures players can always return to surface
-- **Portal Exit**: F key interaction returns to surface at nearest unoccupied tile to entrance
-- **Smart Cache Management**: Dungeon chunks preserved when re-entering same dungeon, cleared only when entering different dungeons
-- **Portal Position Persistence**: Portal location cached and preserved across dungeon visits for consistency
-
-### **Rendering System Isolation**
-- **Complete Isolation**: Dungeon mode shows only dungeon content (no world trees/NPCs/health bars)
-- **World Animation Blocking**: Animation system and world health bars disabled in dungeon mode
-- **Camera Mode Toggle**: Seamless switching between world and dungeon views
-- **Entrance Position Tracking**: Dungeon system stores entrance coordinates for consistent generation
-- **Visual Consistency**: Clean dungeon-only rendering with proper tile colors and structure sprites
-- **Health Bar Integration**: Dungeon NPCs show health bars when damaged (same system as world NPCs)
-
-### **Dungeon Features & Rewards**
-
-#### **High Amplitude Noise Entity System**
-- **Single Noise Function**: Uses high amplitude noise to determine all entity placement (monsters, chests, portals)
-- **Threshold-Based Spawning**: Different noise amplitude ranges spawn different entity types
-- **Environment-Agnostic**: Reusable system for dungeons, caves, forests with different thresholds
-- **No Circular Dependencies**: Clean architecture eliminates complex tile-checking during generation
-
-#### **Dungeon Entity Thresholds** - Updated December 2024
-- **Monsters**: 60-85% noise amplitude (25% of tunnel tiles, increased from 15%)
-- **Chests**: 85-95% noise amplitude (10% of tunnel tiles)
-- **Portals**: 95-100% noise amplitude (5% of tunnel tiles, rarest)
-
-#### **Enhanced Monster Distribution** - Updated December 2024
-- **Increased Spawn Rate**: Monsters spawn at high noise peaks (60-85% amplitude, increased from 70-85%)
-- **Higher Monster Frequency**: 25% increase in monster encounters throughout dungeons
-- **Minimum Spacing**: 3-tile minimum distance between monsters prevents overcrowding
-- **Monster Variety**: Same types as surface (orcs, skeletons, goblins, slimes, etc.)
-- **Aggressive Behavior**: All dungeon monsters are hostile by default
-- **Entrance Exclusion**: 10-tile radius around entrance remains monster-free for safe entry
-- **Performance Optimized**: Reduced console logging (only 10% of spawns logged) to prevent lag during generation
-
-#### **Treasure Chest System**
-- **Amplitude-Based Placement**: Chests spawn at highest noise peaks (85-95% amplitude)
-- **Minimum Spacing**: 4-tile minimum distance between chests prevents overcrowding
-- **Maximum Limit**: 10 chests per dungeon for balanced treasure distribution
-- **Quality Scaling**: Loot quality improves with distance from entrance (adjusted for 50-tile depth)
-- **Chest Contents by Depth**:
-  - **Shallow (0-20 tiles)**: Copper ore, iron ore, gold ore, leather
-  - **Medium (20-35 tiles)**: Above + gold ingots, rare gems
-  - **Deep (35-50 tiles)**: Above + magic potions, ancient artifacts
-- **Deterministic Generation**: Same entrance position always generates same chest locations and contents
-- **Performance Optimized**: Reduced console logging (only first 3 chests and every 3rd chest logged) to prevent lag during generation
-
-#### **Reusable Entity Spawning System**
-- **Static Utility Method**: `Dungeon.getEntitySpawnType()` for cross-environment use
-- **Environment Support**: Dungeons, caves, forests with different entity types and thresholds
-- **Extensible Design**: Easy to add new environments and entity types
-- **Clean Architecture**: Single noise evaluation per tile, no complex proximity checking during generation
-
-### **Player Experience** - Updated December 2024
-- **Safe Entry**: Entrance area guaranteed passable for player spawning
-- **Substantial Exploration**: Larger tunnel system provides meaningful adventure while maintaining clear progression
-- **Progressive Difficulty**: Monsters and rewards increase with exploration depth over 50-tile journey
-- **Single Guaranteed Exit**: Exactly one portal ensures focused exit strategy and prevents confusion
-- **Increased Monster Encounters**: 25% increase in monster spawn rates guarantees more frequent combat
-- **Enhanced Tunnel Width**: Expanded tunnel generation (0.5 threshold vs 0.35) provides more movement space
-- **Improved NPC Movement**: Extended branching, room systems, and connecting corridors for better NPC navigation
-- **Clean Interface**: No world content bleeding into dungeon view for immersive experience
-- **Balanced Risk vs Reward**: Better loot deeper in dungeon balances increased monster danger and exploration time
+### **Tombstone UI Features** - Enhanced December 2024
+- **Dual Inventory Design**: Full-width interface matching chest storage system
+- **Player Side**: Shows all 9 player inventory slots in 3×3 grid with player name
+- **Tombstone Side**: Shows tombstone inventory in 3×3 grid with entity-specific title:
+  - Player: "[PlayerName]'s Grave" (e.g., "Hero's Grave")
+  - Traders: "[Type] Trader's Grave" (e.g., "Farmer Trader's Grave")
+  - Monsters: "[Type] Monster's Grave" (e.g., "Orc Monster's Grave")
+  - Bandits: "[Type] Bandit's Grave" (e.g., "Farmer Bandit's Grave")
+- **Navigation Controls**:
+  - **Arrow Keys**: Navigate within and between inventories (seamless grid navigation)
+  - **Left/Right**: Move between player and tombstone inventories
+  - **Up/Down**: Navigate within current inventory grid
+  - **X Key**: Transfer selected item between inventories (bidirectional)
+  - **Z Key**: Transfer all items based on current selection:
+    - From tombstone to player when tombstone side selected
+    - From player to tombstone when player side selected
+  - **F/ESC Keys**: Close tombstone interface
+- **Bidirectional Transfer**: Items can be moved both ways between player and tombstone
+- **Visual Design**: Modern bubble interface with responsive slot sizing
+- **Status Display**: Real-time item counts and transfer instructions
+- **Height-Aware Sizing**: Slots sized based on both width and height constraints (minimum 30px)
+- **Smart Selection**: Visual indicators show which inventory side is currently selected
 
 ## 🎒 **Inventory System**
 
@@ -1593,3 +1467,759 @@ class EventBus {
 ---
 
 *This document reflects the current game implementation as a comprehensive survival/RPG experience with procedural world generation, well-centered village systems, animated NPCs, and advanced interaction systems. The game features a complete inventory system with redesigned full-width UI containers, enhanced equipment/armor slot management with two-column layout, and character viewing capabilities with continuously animated player sprites. The sophisticated combat mechanics include blocking systems, village-based reputation system with RPG dialogue, advanced monster flocking algorithms with two-phase movement coordination, enhanced dungeon systems with increased monster frequency and expanded NPC movement spaces, trader generation with defensive combat capabilities, dungeon monster spawning, environmental interactions with priority-based structure placement, modern bubble-style UI system with hierarchical component architecture inspired by contemporary mobile and handheld gaming interfaces, and comprehensive movement intention systems that prevent NPC deadlocks through speculative movement and position swapping. The enhanced inventory UI system provides optimal space utilization through height-aware slot sizing, armor slot management in a two-column layout, and trade inventory interfaces that use the full canvas width with 4-directional navigation, while automatically hiding the right-side inventory panel when full UI components are active. The enhanced dungeon system provides substantially more movement space for NPCs through expanded tunnel generation with increased width thresholds, room systems, and connecting corridors, while the advanced collision detection ensures smooth coordination between NPCs in both world and dungeon environments. The atomic OOP architecture with InputSystem and ActionSystem classes provides clean separation of concerns, type-safe action processing, and optimized game loop performance. The attack and interaction systems provide dynamic gameplay where player actions have meaningful consequences through the reputation system, while monsters actively hunt friendly NPCs using sophisticated AI behaviors with auto-blocking trader defensive combat and increased encounter frequency.*
+
+## ⛏️ **Mine System** - New December 2024
+
+### **Enhanced Mine Generation**
+- **Fractal Tree Algorithm**: Uses deterministic fractal patterns to generate realistic mine shaft layouts
+- **Main Vertical Shaft**: Primary corridor extends up to 60 tiles down from entrance (2 tiles wide)
+- **Horizontal Branching**: 5 horizontal levels at depths 15, 25, 35, 45, 55 tiles with 80% spawn chance
+- **Variable Branch Lengths**: Horizontal branches extend 20-35 tiles with straight vertical sub-branches
+- **Entrance Coordinate Matching**: Mine entrance position matches world tile coordinates exactly
+- **Deterministic Generation**: Same entrance always generates same mine layout based on entrance world coordinates
+- **200x200 Tile Constraint**: Mines limited to same size constraints as dungeons for performance
+
+### **Mine Architecture & Layout**
+- **Entrance Area**: 5-tile radius around entrance guaranteed to be passable dirt tunnel
+- **Main Shaft**: Vertical tunnel going south from entrance (1-2 tiles wide, up to 50 tiles deep)
+- **Branch Levels**: Horizontal branches at depths 10, 20, 30, 40, and 50 tiles (up to 15 tiles in each direction)
+- **Sub-Branches**: Vertical branches extending 8 tiles from horizontal branch endpoints
+- **Wood Support Structures**: Automatically placed on stone tiles adjacent to dirt tunnels
+- **Tunnel Floors**: All tunnel areas use passable DIRT tiles for movement
+- **Wall System**: All non-tunnel areas are impassable STONE tiles
+
+### **Mine Features & Content**
+
+#### **Chest System** - Enhanced for Mining
+- **Maximum Limit**: Up to 15 normal chests per mine (more than dungeons for resource focus)
+- **High Spawn Rate**: 30% base chance for chest generation in tunnel areas (increased from dungeon rates)
+- **Distance-Based Loot**: Treasure quality and quantity improves with depth from entrance
+- **Mine-Specific Inventory**: Chests contain ores, ingots, coal, wood, tools, and potions
+- **Deterministic Content**: Same chest always contains same items based on entrance position seed
+- **Spacing Requirements**: 3-tile minimum distance between chests prevents overcrowding
+
+#### **Torch Lighting System**
+- **Automatic Placement**: Torches spawn throughout tunnel system for atmospheric lighting
+- **Flickering Animation**: 2-frame animation cycle creates realistic torch effects
+- **Spacing Distribution**: 3-tile minimum spacing prevents torch clustering
+- **Passable Lighting**: Torches don't block movement but provide visual ambiance
+
+#### **Wood Support Infrastructure**
+- **Structural Realism**: Wood support beams placed on stone tiles adjacent to tunnels
+- **Mining Aesthetic**: Mimics real underground mine support structures
+- **Movement Blocking**: Wood supports are impassable to maintain tunnel flow
+- **Automatic Generation**: Supports placed during initial mine generation
+
+### **Bandit NPC System & Combat Behavior**
+- **Hostile Traders**: Bandits use trader sprites but have aggressive behavior
+- **Combat Stats**: 40 HP, moderate damage output between traders and monsters
+- **Target Priority**: Attack monsters and players, but NOT other bandits
+- **Flocking Behavior**: Move towards monsters and players for combat engagement
+- **Monster vs Bandit Combat**: Bandits actively hunt and fight monsters in mines
+- **Loot Collection**: Bandits collect drops from defeated monsters
+- **Spawn Distribution**: Bandits spawn 10+ tiles from entrance in deeper mine areas
+- **Bandit Types**: Axeman, Swordsman, Spearman, and Farmer bandits (using trader sprites)
+- **Spacing Requirements**: 5-tile minimum distance between bandits
+- **Mine-Specific AI**: Bandits patrol tunnel systems and defend mining territory
+- **Differentiation**: Bandits don't attack each other (unlike pure monsters)
+
+### **Mine Loot Distribution by Depth**
+
+#### **Shallow Mines (0-20 tiles from entrance)**
+- **Copper Ore**: 1-3 quantity (40% chance)
+- **Coal**: 2-5 quantity (30% chance)
+- **Wood**: 3-7 quantity (20% chance)
+- **Health Potions**: 1 quantity (10% chance)
+
+#### **Medium Depth Mines (20-40 tiles from entrance)**
+- **Iron Ore**: 1-3 quantity (30% chance)
+- **Copper Ore**: 2-5 quantity (20% chance)
+- **Coal**: 3-8 quantity (20% chance)
+- **Copper Ingots**: 1-2 quantity (20% chance)
+- **Health Potions**: 1-2 quantity (10% chance)
+
+#### **Deep Mines (40+ tiles from entrance)**
+- **Gold Ore**: 1-2 quantity (20% chance)
+- **Iron Ore**: 2-5 quantity (20% chance)
+- **Iron Ingots**: 1-2 quantity (20% chance)
+- **Gold Ingots**: 1 quantity (20% chance)
+- **Magic Potions**: 1 quantity (15% chance)
+- **Hammer Tools**: 1 quantity (5% chance)
+
+### **Mine Entrance & Navigation**
+- **Surface Entrance**: POI remains at exact world coordinates in both world and mine views
+- **Entrance Interaction**: F key switches camera to mine rendering mode
+- **Smart Player Spawning**: Player spawns at nearest unoccupied dirt tile to entrance
+- **Mine Exit**: F key interaction at entrance returns to surface world rendering
+- **Cached Tile Data**: Mine layouts preserved when re-entering same mine entrance
+- **Cross-Session Persistence**: Mine structure and content maintained across game sessions
+
+### **Cached Tile Data Architecture** - New December 2024
+
+#### **Hierarchical Storage System**
+```
+data/
+├── world/
+│   └── (cached world tile data - only modified tiles stored)
+├── dungeons/
+│   ├── dungeon_x_y/ (cached dungeon data by entrance coordinates)
+│   └── dungeon_x2_y2/ (another dungeon instance)
+└── mines/
+    ├── mine_x_y/ (cached mine data by entrance coordinates)
+    └── mine_x2_y2/ (another mine instance)
+```
+
+#### **Optimized Storage Strategy**
+- **World Tiles**: Only store tiles modified from procedural generation (structures, NPCs, POIs)
+- **Dungeon/Mine Tiles**: Store complete tile data for underground environments
+- **Entrance Coordinate Keys**: Use entrance world coordinates as unique identifiers
+- **On-Demand Generation**: Only generate cached data when player enters new environments
+- **Memory Efficiency**: Minimize storage by caching only essential modified data
+
+#### **Multiplayer Considerations**
+- **Coordinate-Based Indexing**: Entrance coordinates provide unique keys for shared environments
+- **Deterministic Generation**: Same entrance coordinates generate identical layouts for all players
+- **Incremental Loading**: Load only required chunks based on player proximity
+- **Conflict Resolution**: Last-writer-wins for tile modifications in shared environments
+- **Scalable Architecture**: System designed to handle multiple concurrent mine/dungeon instances
+
+### **Enhanced Dungeon System Updates** - December 2024
+
+#### **Improved Floor Types**
+- **Tunnel Floors**: Changed from VOID to passable COBBLESTONE and DIRT tiles
+- **Wall System**: Non-tunnel areas now use impassable STONE tiles instead of VOID
+- **Visual Consistency**: Dungeons now have proper floor/wall distinction like mines
+- **Movement Logic**: STONE tiles block movement, COBBLESTONE/DIRT tiles allow passage
+
+#### **Updated Dungeon Generation**
+- **Floor Variation**: Random mix of COBBLESTONE (60%) and DIRT (40%) for tunnel floors
+- **Stone Boundaries**: All non-tunnel areas filled with impassable STONE tiles
+- **Consistent Architecture**: Matches mine system's floor/wall approach
+- **Enhanced Realism**: Proper underground environment appearance
+
+### **Player Experience** - Mine System
+- **Resource Focus**: Mines emphasize ore and material collection over combat
+- **Moderate Danger**: Bandits provide threat without overwhelming difficulty
+- **Exploration Depth**: Fractal branching encourages thorough exploration
+- **Progressive Rewards**: Better loot deeper in mine balances risk vs reward
+- **Tool Integration**: Hammer tools found in deep mines for future mining mechanics
+- **Atmospheric Design**: Torch lighting and wood supports create immersive mining environment
+- **Strategic Navigation**: Branch system requires planning and map awareness
+- **Clean Interface**: No world content bleeding into mine view for focused experience
+
+### **Future Mining Mechanics**
+- **Manual Excavation**: Players will be able to mine STONE blocks to create new tunnels
+- **Tunnel Expansion**: Custom tunnel creation without regenerating existing mine layouts
+- **Resource Extraction**: Direct mining of ore from stone walls
+- **Tool Requirements**: Different tools needed for different stone types and ores
+- **Persistent Modifications**: Player-created tunnels saved in cached tile data
+- **No Regeneration**: Mines maintain initial layout permanently, only expand through player action
+
+## 🔦 **Lighting System & Day/Night Cycle** - New December 2024
+
+### **Day/Night Cycle**
+- **Cycle Duration**: 15-minute total cycles (10 minutes day, 5 minutes night)
+- **World Light Levels**: Dynamic lighting based on time of day
+  - **Daytime**: Full light level (1.0) with no monster spawning
+  - **Nighttime**: Reduced light with sinusoidal progression (minimum 0.2)
+- **Visual Effects**: Darkness overlay during night with up to 80% opacity
+- **Time Display**: UI shows current phase (day/night) and progress
+
+### **Environment Light Levels**
+- **World Surface**: 1.0 light level during day, variable at night (0.2-1.0)
+- **Mine Environment**: Fixed 0.5 light level (low light, moderate danger)
+- **Dungeon Environment**: Fixed 0.0 light level (dark, high danger)
+- **Underground Consistency**: Mines and dungeons unaffected by surface day/night cycle
+
+### **Torch Lighting System**
+- **Light Radius**: 5x5 area illumination around each torch
+- **Light Intensity**: 0.6 maximum light boost with distance falloff
+- **Placement Strategy**: Enhanced torch generation in mines using separate Perlin noise
+- **Light Calculation**: Additive lighting system with maximum 1.0 effective light level
+- **Visual Effects**: Torch lighting reduces darkness overlay in underground areas
+
+### **Portal Lighting System** - New Feature
+- **Portal Light Sources**: Dungeon portals now emit light similar to torches
+- **Light Radius**: 5x5 area illumination around each portal (same as torches)
+- **Light Intensity**: 0.6 maximum light boost with distance falloff
+- **Automatic Registration**: Portals automatically register with lighting system when spawned
+- **Dungeon Illumination**: Provides crucial lighting in completely dark dungeons (0.0 base light)
+- **Strategic Positioning**: Portal light creates safe zones for players in dangerous dungeon areas
+- **Clean Transitions**: Portal positions cleared from lighting system when entering new dungeons
+
+### **Monster Spawning Based on Light Levels**
+- **Light-Based Spawning**: Monster spawn rates inversely related to effective light levels
+- **Spawn Chance Formula**: `(1.0 - lightLevel) * 0.3` base spawn chance
+- **Environment Spawn Rates**:
+  - **World (Day)**: No monster spawning (1.0 light level)
+  - **World (Night)**: Low to moderate spawning (0.2-1.0 light level)
+  - **Mines**: Moderate spawning (0.5 base light, reduced near torches)
+  - **Dungeons**: High spawning (0.0 light level, maximum danger)
+- **Perlin Noise Distribution**: Separate monster noise map for natural placement patterns
+- **Spacing Algorithm**: Minimum 4-tile distance between spawned monsters
+- **Dynamic Spawning**: Continuous monster generation based on current light conditions
+
+### **Visual Darkness System**
+- **Tile-Based Rendering**: Individual tile darkness calculation for underground areas
+- **Opacity Scaling**: Darkness opacity ranges from 0% (full light) to 80% (maximum darkness)
+- **Torch Effects**: Localized light reduction around torch positions
+- **Layer Rendering**: Darkness overlay rendered on top of all game elements
+- **Performance**: Efficient calculation only for visible tiles within camera view
+
+### **Light Level Calculation**
+- **Base Light**: Environment-specific base light level
+- **Torch Bonus**: Calculated from all torches within 2.5 tile radius
+- **Distance Falloff**: Linear falloff from torch center to edge of light radius
+- **Maximum Light**: Effective light capped at 1.0 regardless of torch density
+- **Real-Time Updates**: Light levels recalculated dynamically as torches are added/removed
+
+## 🏗️ **Current Architecture & Optimization Analysis** - Updated December 2024
+
+### **Current System Architecture Analysis**
+
+#### **Lighting System Performance Assessment**
+The current LightingSystem implementation shows several optimization opportunities:
+
+**Current Implementation Strengths:**
+- ✅ **Tile-Based Darkness Rendering**: Efficient per-tile light calculation for underground areas
+- ✅ **Torch Position Tracking**: Map-based torch registration system for light calculations
+- ✅ **Environment-Aware Lighting**: Different base light levels for world/mine/dungeon
+- ✅ **Day/Night Cycle Integration**: Sinusoidal light progression with visual darkness overlay
+
+**Identified Performance Bottlenecks:**
+- ❌ **O(n²) Torch Distance Calculations**: Every tile checks against ALL torches in system
+- ❌ **Redundant Light Calculations**: Same tiles recalculated every frame without caching
+- ❌ **Full-Screen Darkness Overlay**: Renders darkness for entire camera view, not just dark areas
+- ❌ **Missing Spatial Indexing**: No spatial optimization for torch light radius queries
+
+#### **Cached Tile Data Architecture Assessment**
+
+**Current Implementation Analysis:**
+- ✅ **Hierarchical Chunk System**: World uses 16x16 chunk-based tile management
+- ✅ **Modified Tile Tracking**: Chunks track only modified tiles for memory efficiency
+- ✅ **Visible Tile Caching**: World caches visible tiles based on camera view
+- ✅ **Cross-Environment Isolation**: Separate tile systems for world/dungeon/mine
+
+**Storage Optimization Issues:**
+- ❌ **Inconsistent Cache Invalidation**: Multiple systems invalidate cache independently
+- ❌ **Memory Leak Potential**: No automatic cleanup of old cached data
+- ❌ **Redundant Entity Tracking**: NPCs tracked in both chunks and separate maps
+- ❌ **Missing Compression**: Large tile data structures stored without compression
+
+#### **Player & NPC Update Performance Analysis**
+
+**Current Optimization Strengths:**
+- ✅ **Camera-Based Updates**: Only update entities within camera view + buffer
+- ✅ **Two-Phase Movement**: Sophisticated movement intention system prevents deadlocks
+- ✅ **Distance-Squared Calculations**: Avoids expensive sqrt() calls for distance checks
+- ✅ **Cached Nearby Entities**: Pre-calculates nearby NPCs/buildings for each update cycle
+
+**Performance Bottlenecks Identified:**
+- ❌ **Nested Loop Updates**: O(n²) complexity for NPC-to-NPC interactions
+- ❌ **Redundant Pathfinding**: NPCs recalculate paths every frame without caching
+- ❌ **Synchronous Updates**: All NPCs updated in single thread, blocking rendering
+- ❌ **Missing Entity Pooling**: NPCs created/destroyed frequently causing GC pressure
+
+### **Atomic OOP Principles Implementation Status**
+
+#### **Current Architecture Compliance**
+
+**✅ Well-Implemented Principles:**
+1. **Single Responsibility Principle**: Most systems have focused responsibilities
+   - `LightingSystem`: Handles only lighting calculations and rendering
+   - `InputSystem`: Centralized input processing with action queue architecture
+   - `ActionSystem`: Atomic action processing with proper error handling
+   - `AnimationSystem`: Centralized entity animation management
+
+2. **Dependency Injection**: Some systems use constructor injection
+   - `World` receives `Camera` and `WorldGenerator` dependencies
+   - `Movement` system receives `World`, `Dungeon`, `Mine`, and `Camera`
+   - `UIManager` receives canvas context dependency
+
+3. **Interface Segregation**: Well-defined interfaces for different entity types
+   - `AnimatedEntity`, `POILike`, `NPCLike`, `TreeLike`, `CactusLike` interfaces
+   - Separate interfaces for different structure types (VillageStructure, MineStructure, DungeonStructure)
+
+**❌ Areas Needing Improvement:**
+
+1. **Tight Coupling Issues:**
+   ```typescript
+   // Game.ts - Direct dependencies create tight coupling
+   this.world = new World(this.camera, new WorldGenerator(seed));
+   this.dungeon = new Dungeon(seed);
+   this.mine = new Mine(seed);
+   ```
+
+2. **Mixed Responsibilities:**
+   ```typescript
+   // World.ts - Handles both tile management AND NPC updates
+   private updateVillageStructures(deltaTime: number, playerPosition?: Position, playerInventory?: InventoryItem[]): void
+   ```
+
+3. **Missing Abstractions:**
+   - No common interface for World/Dungeon/Mine tile providers
+   - Direct method calls between systems instead of event-driven communication
+   - No service locator pattern for global system access
+
+### **Recommended Optimization Strategies**
+
+#### **1. Lighting System Optimizations**
+
+**Spatial Indexing for Torch Queries:**
+```typescript
+class SpatialLightingSystem extends LightingSystem {
+  private torchQuadTree: QuadTree<TorchData>;
+  private lightCache = new Map<string, number>(); // tileKey -> effectiveLight
+  private cacheValidUntil = 0;
+
+  public calculateEffectiveLightLevel(tile: Tile, renderingMode: string): number {
+    const tileKey = `${tile.x},${tile.y}`;
+    const now = Date.now();
+
+    // Use cached value if still valid (cache for 100ms)
+    if (now < this.cacheValidUntil && this.lightCache.has(tileKey)) {
+      return this.lightCache.get(tileKey)!;
+    }
+
+    // Query only nearby torches using spatial indexing
+    const nearbyTorches = this.torchQuadTree.queryRange(tile.x - 3, tile.y - 3, 6, 6);
+    const lightLevel = this.calculateLightFromTorches(tile, nearbyTorches, renderingMode);
+
+    this.lightCache.set(tileKey, lightLevel);
+    return lightLevel;
+  }
+}
+```
+
+**Optimized Darkness Rendering:**
+```typescript
+// Only render darkness for tiles that actually need it
+private renderOptimizedDarkness(ctx: CanvasRenderingContext2D, camera: Camera): void {
+  const darkTiles = this.identifyDarkTiles(camera); // Pre-filter dark tiles
+
+  for (const darkTile of darkTiles) {
+    const opacity = this.calculateDarknessOpacity(darkTile);
+    if (opacity > 0.05) { // Skip nearly transparent tiles
+      this.renderTileDarkness(ctx, darkTile, opacity);
+    }
+  }
+}
+```
+
+#### **2. Enhanced Cached Tile Data Architecture**
+
+**Unified Cache Manager:**
+```typescript
+interface TileProvider {
+  getTile(x: number, y: number): Tile | null;
+  setTile(x: number, y: number, tile: Tile): void;
+  invalidateRegion(x: number, y: number, width: number, height: number): void;
+}
+
+class UnifiedCacheManager {
+  private providers = new Map<string, TileProvider>();
+  private cacheMetrics = new Map<string, CacheMetrics>();
+
+  public registerProvider(name: string, provider: TileProvider): void {
+    this.providers.set(name, provider);
+    this.cacheMetrics.set(name, new CacheMetrics());
+  }
+
+  public getTile(providerName: string, x: number, y: number): Tile | null {
+    const provider = this.providers.get(providerName);
+    const metrics = this.cacheMetrics.get(providerName);
+
+    if (provider && metrics) {
+      metrics.recordAccess();
+      return provider.getTile(x, y);
+    }
+    return null;
+  }
+
+  // Automatic cleanup based on access patterns
+  public performMaintenance(): void {
+    for (const [name, metrics] of this.cacheMetrics) {
+      if (metrics.shouldCleanup()) {
+        this.providers.get(name)?.invalidateRegion(/* unused areas */);
+      }
+    }
+  }
+}
+```
+
+**Compressed Tile Storage:**
+```typescript
+interface CompressedTileData {
+  baseType: TileType;
+  modifications: Uint8Array; // Compressed delta from base
+  entityFlags: number; // Bitfield for entity presence
+}
+
+class CompressedChunk extends Chunk {
+  private compressedData = new Map<string, CompressedTileData>();
+
+  public compressTile(tile: Tile): CompressedTileData {
+    return {
+      baseType: tile.value,
+      modifications: this.compressTileModifications(tile),
+      entityFlags: this.encodeEntityFlags(tile)
+    };
+  }
+
+  public decompressTile(data: CompressedTileData, x: number, y: number): Tile {
+    const baseTile = this.generateBaseTile(data.baseType, x, y);
+    this.applyModifications(baseTile, data.modifications);
+    this.restoreEntities(baseTile, data.entityFlags);
+    return baseTile;
+  }
+}
+```
+
+#### **3. Atomic OOP Architecture Improvements**
+
+**Service Locator Pattern Implementation:**
+```typescript
+interface GameService {
+  initialize(): Promise<void>;
+  update(deltaTime: number): void;
+  cleanup(): void;
+}
+
+class ServiceLocator {
+  private static services = new Map<string, GameService>();
+  private static instances = new Map<string, any>();
+
+  public static register<T extends GameService>(name: string, serviceClass: new(...args: any[]) => T): void {
+    this.services.set(name, serviceClass as any);
+  }
+
+  public static async get<T>(name: string): Promise<T> {
+    if (!this.instances.has(name)) {
+      const ServiceClass = this.services.get(name);
+      if (ServiceClass) {
+        const instance = new (ServiceClass as any)();
+        await instance.initialize();
+        this.instances.set(name, instance);
+      }
+    }
+    return this.instances.get(name) as T;
+  }
+
+  public static async initializeAll(): Promise<void> {
+    const initPromises = Array.from(this.instances.values()).map(service => service.initialize());
+    await Promise.all(initPromises);
+  }
+}
+
+// Usage:
+ServiceLocator.register('lightingSystem', LightingSystem);
+ServiceLocator.register('worldGenerator', WorldGenerator);
+const lighting = await ServiceLocator.get<LightingSystem>('lightingSystem');
+```
+
+**Event-Driven Communication System:**
+```typescript
+interface GameEvent {
+  type: string;
+  timestamp: number;
+  data?: any;
+  source?: string;
+}
+
+class EventBus implements GameService {
+  private listeners = new Map<string, Set<(event: GameEvent) => void>>();
+  private eventQueue: GameEvent[] = [];
+
+  public subscribe(eventType: string, callback: (event: GameEvent) => void): void {
+    if (!this.listeners.has(eventType)) {
+      this.listeners.set(eventType, new Set());
+    }
+    this.listeners.get(eventType)!.add(callback);
+  }
+
+  public emit(event: GameEvent): void {
+    this.eventQueue.push({ ...event, timestamp: Date.now() });
+  }
+
+  public update(deltaTime: number): void {
+    // Process events in batches to prevent frame drops
+    const batchSize = 10;
+    const eventsToProcess = this.eventQueue.splice(0, batchSize);
+
+    for (const event of eventsToProcess) {
+      const listeners = this.listeners.get(event.type);
+      if (listeners) {
+        for (const callback of listeners) {
+          try {
+            callback(event);
+          } catch (error) {
+            console.error(`Error processing event ${event.type}:`, error);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Usage:
+eventBus.subscribe('player.moved', (event) => {
+  lightingSystem.updatePlayerLighting(event.data.position);
+});
+
+eventBus.subscribe('npc.died', (event) => {
+  world.createTombstone(event.data.npc, event.data.position);
+});
+```
+
+**Entity Component System (ECS) Foundation:**
+```typescript
+interface Component {
+  readonly type: string;
+}
+
+interface PositionComponent extends Component {
+  type: 'position';
+  x: number;
+  y: number;
+}
+
+interface HealthComponent extends Component {
+  type: 'health';
+  current: number;
+  maximum: number;
+}
+
+interface RenderComponent extends Component {
+  type: 'render';
+  sprite: Sprite;
+  layer: number;
+}
+
+class Entity {
+  private static nextId = 0;
+  public readonly id: number;
+  private components = new Map<string, Component>();
+
+  constructor() {
+    this.id = Entity.nextId++;
+  }
+
+  public addComponent<T extends Component>(component: T): void {
+    this.components.set(component.type, component);
+  }
+
+  public getComponent<T extends Component>(type: string): T | null {
+    return (this.components.get(type) as T) || null;
+  }
+
+  public hasComponent(type: string): boolean {
+    return this.components.has(type);
+  }
+}
+
+abstract class System implements GameService {
+  protected entities = new Set<Entity>();
+  protected requiredComponents: string[] = [];
+
+  public addEntity(entity: Entity): void {
+    if (this.canProcessEntity(entity)) {
+      this.entities.add(entity);
+    }
+  }
+
+  private canProcessEntity(entity: Entity): boolean {
+    return this.requiredComponents.every(type => entity.hasComponent(type));
+  }
+
+  public abstract update(deltaTime: number): void;
+}
+
+class MovementSystem extends System {
+  protected requiredComponents = ['position', 'movement'];
+
+  public update(deltaTime: number): void {
+    for (const entity of this.entities) {
+      const position = entity.getComponent<PositionComponent>('position');
+      const movement = entity.getComponent<MovementComponent>('movement');
+
+      if (position && movement) {
+        this.updateEntityMovement(entity, position, movement, deltaTime);
+      }
+    }
+  }
+}
+```
+
+#### **4. Performance Optimization Implementation**
+
+**Asynchronous NPC Updates:**
+```typescript
+class AsyncNPCUpdateSystem {
+  private updateWorker: Worker;
+  private pendingUpdates = new Map<number, NPCUpdateData>();
+
+  constructor() {
+    this.updateWorker = new Worker('/workers/npc-update-worker.js');
+    this.updateWorker.onmessage = this.handleWorkerResponse.bind(this);
+  }
+
+  public async updateNPCs(npcs: NPC[], context: UpdateContext): Promise<void> {
+    // Batch NPCs into chunks for parallel processing
+    const chunks = this.chunkArray(npcs, 10);
+    const updatePromises = chunks.map(chunk => this.updateNPCChunk(chunk, context));
+
+    await Promise.all(updatePromises);
+  }
+
+  private async updateNPCChunk(npcs: NPC[], context: UpdateContext): Promise<void> {
+    const updateData = npcs.map(npc => this.serializeNPCForUpdate(npc, context));
+
+    return new Promise((resolve) => {
+      const requestId = Math.random();
+      this.pendingUpdates.set(requestId, { resolve, npcs });
+
+      this.updateWorker.postMessage({
+        type: 'updateNPCs',
+        requestId,
+        data: updateData,
+        context
+      });
+    });
+  }
+}
+```
+
+**Object Pooling for Frequent Allocations:**
+```typescript
+class EntityPool<T> {
+  private available: T[] = [];
+  private inUse = new Set<T>();
+  private factory: () => T;
+  private resetFn: (item: T) => void;
+
+  constructor(factory: () => T, resetFn: (item: T) => void, preAllocate = 10) {
+    this.factory = factory;
+    this.resetFn = resetFn;
+
+    // Pre-allocate objects to avoid GC pressure
+    for (let i = 0; i < preAllocate; i++) {
+      this.available.push(factory());
+    }
+  }
+
+  public acquire(): T {
+    let item = this.available.pop();
+    if (!item) {
+      item = this.factory();
+    }
+
+    this.inUse.add(item);
+    return item;
+  }
+
+  public release(item: T): void {
+    if (this.inUse.has(item)) {
+      this.inUse.delete(item);
+      this.resetFn(item);
+      this.available.push(item);
+    }
+  }
+
+  public getStats(): { available: number; inUse: number } {
+    return {
+      available: this.available.length,
+      inUse: this.inUse.size
+    };
+  }
+}
+
+// Usage:
+const npcPool = new EntityPool(
+  () => new NPC({ type: 'chicken', position: { x: 0, y: 0 } }),
+  (npc) => npc.reset(),
+  50 // Pre-allocate 50 NPCs
+);
+
+const newNPC = npcPool.acquire();
+// Use NPC...
+npcPool.release(newNPC);
+```
+
+### **Implementation Priority Recommendations**
+
+#### **Phase 1: Critical Performance (Immediate)**
+1. **Spatial Indexing for Lighting** - Reduce O(n²) torch calculations to O(log n)
+2. **NPC Update Batching** - Group NPC updates to prevent frame drops
+3. **Cache Invalidation Optimization** - Reduce redundant cache rebuilding
+4. **Object Pooling** - Implement for NPCs and frequently created entities
+
+#### **Phase 2: Architecture Improvements (Medium Term)**
+1. **Service Locator Pattern** - Reduce tight coupling between systems
+2. **Event-Driven Communication** - Replace direct method calls with events
+3. **Unified Cache Manager** - Centralize all tile caching logic
+4. **Compressed Tile Storage** - Reduce memory usage for large worlds
+
+#### **Phase 3: Advanced Optimizations (Long Term)**
+1. **Full ECS Implementation** - Migrate from inheritance to composition
+2. **Asynchronous Systems** - Move heavy calculations to web workers
+3. **Predictive Caching** - Pre-load tiles based on player movement patterns
+4. **Dynamic Level of Detail** - Reduce update frequency for distant entities
+
+### **Performance Monitoring & Metrics**
+
+```typescript
+class PerformanceMonitor {
+  private metrics = new Map<string, PerformanceMetric>();
+
+  public startTiming(name: string): void {
+    this.metrics.set(name, { startTime: performance.now() });
+  }
+
+  public endTiming(name: string): number {
+    const metric = this.metrics.get(name);
+    if (metric) {
+      const duration = performance.now() - metric.startTime;
+      metric.totalTime = (metric.totalTime || 0) + duration;
+      metric.callCount = (metric.callCount || 0) + 1;
+      return duration;
+    }
+    return 0;
+  }
+
+  public getAverageTime(name: string): number {
+    const metric = this.metrics.get(name);
+    return metric && metric.callCount ? metric.totalTime / metric.callCount : 0;
+  }
+
+  public logPerformanceReport(): void {
+    console.table(
+      Array.from(this.metrics.entries()).map(([name, metric]) => ({
+        System: name,
+        'Avg Time (ms)': this.getAverageTime(name).toFixed(2),
+        'Total Calls': metric.callCount || 0,
+        'Total Time (ms)': (metric.totalTime || 0).toFixed(2)
+      }))
+    );
+  }
+}
+```
+
+This comprehensive optimization strategy addresses the current performance bottlenecks while establishing a foundation for scalable, maintainable code architecture following atomic OOP principles.
+
+## 👤 **Player System**
+
+### **Player Name & Identity**
+- **URL Parameter Support**: Player name can be set via `playerName` URL parameter (e.g., `?playerName=Hero`)
+- **Default Name**: Players start with default name "Hero" if no URL parameter provided
+- **Name Display**: Player name shown in inventory UI and tombstone titles
+- **Character Limit**: Player names limited to 20 characters with alphanumeric characters, spaces, hyphens, and underscores
+- **Persistent Identity**: Player name used in tombstone creation across all environments
+
+### **Player Inventory System**
+- **Dual Layout**: Inventory UI shows player items (left) and character view with armor slots (right)
+- **Player Name Display**: Shows "Player: [Name]" at top of character section
+- **Full-Width Interface**: Uses entire canvas width when open
+- **Navigation**: Arrow keys move between inventory grid (0-8) and armor slots (9-15)
+- **Armor Organization**:
+  - **Column 1**: Head, Torso, Legs, Feet (slots 9-12)
+  - **Column 2**: Left Hand, Right Hand/Arms, Wearable (slots 13-15)

@@ -1,13 +1,15 @@
-import type { PlayerState } from '../engine/types';
+import type { GameState, PlayerState } from '../engine/types';
 import type { Controls } from './Controls';
 import { WorldGenerator } from '../world/WorldGenerator';
-import { type World } from '../world/World';
+import type { World } from '../world/World';
 import type { Dungeon } from '../world/Dungeon';
+import type { Mine } from '../world/Mine';
 import type { Camera } from './Camera';
-import type { Tree } from '../entities/structure/Tree';
-import type { Cactus } from '../entities/structure/Cactus';
+import { type Tree } from '../entities/structure/Tree';
+import { type Cactus } from '../entities/structure/Cactus';
 import type { VillageStructure } from '../world/VillageGenerator';
 import type { Player } from '../entities/player/Player';
+import type { Tile } from '../world/WorldGenerator';
 
 export class Movement {
     private readonly TILE_SIZE = WorldGenerator.TILE_SIZE; // Use unified tile size
@@ -15,15 +17,17 @@ export class Movement {
     private moveDelay = 120; // ms between moves when holding a key
     private world: World;
     private dungeon: Dungeon;
+    private mine: Mine;
     private camera: Camera;
     private onMoveCallback?: (direction: 'up' | 'down' | 'left' | 'right') => void;
     private onDirectionChangeCallback?: (direction: 'up' | 'down' | 'left' | 'right', moved: boolean) => void;
     private player?: Player; // Reference to player for sprite animations
     private previousPlayerPosition?: { x: number; y: number }; // Track previous position for cactus bounce-back
 
-    constructor(world: World, dungeon: Dungeon, camera: Camera) {
+    constructor(world: World, dungeon: Dungeon, mine: Mine, camera: Camera) {
         this.world = world;
         this.dungeon = dungeon;
+        this.mine = mine;
         this.camera = camera;
     }
 
@@ -42,13 +46,36 @@ export class Movement {
     private canMoveToTile(tile: { value: string; trees?: Tree[]; cactus?: Cactus[]; villageStructures?: VillageStructure[] } | null): boolean {
         if (!tile) return false;
 
-        if (this.camera.renderingMode === 'dungeon') {
-            // In dungeon mode, only VOID tiles are impassable
-            if (tile.value === 'VOID') return false;
+        // Check basic tile impassability for world mode
+        if (this.camera.renderingMode === 'world') {
+            if (tile.value === 'DEEP_WATER' || tile.value === 'SHALLOW_WATER' ||
+                tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW') return false;
 
-            // Check for dungeon structures (monsters, chests, portals)
+            // Check for living trees
+            if (tile.trees?.some(tree => tree.getHealth() > 0)) return false;
+
+            // Check for living cactus
+            if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) return false;
+
+            // Check for impassable structures
             if (tile.villageStructures && tile.villageStructures.length > 0) {
                 for (const structure of tile.villageStructures) {
+                    if (structure.poi && !structure.poi.passable) return false;
+                    if (structure.npc && !structure.npc.isDead()) return false;
+                }
+            }
+            return true;
+        } else if (this.camera.renderingMode === 'dungeon') {
+            // In dungeon mode, only VOID and STONE tiles are impassable
+            if (tile.value === 'VOID' || tile.value === 'STONE') return false;
+
+            // Check for dungeon structures
+            if (tile.villageStructures && tile.villageStructures.length > 0) {
+                for (const structure of tile.villageStructures) {
+                    // In dungeon mode, dungeon entrances should be impassable
+                    if (structure.poi && structure.poi.type === 'dungeon_entrance') {
+                        return false;
+                    }
                     // Check POI passability
                     if (structure.poi && !structure.poi.passable) {
                         return false; // Impassable POI (like chests, portals)
@@ -60,41 +87,31 @@ export class Movement {
                 }
             }
             return true;
-        } else {
-            // World mode - use existing world passability rules
-            // Check for impassable tiles
-            if (tile.value === 'DEEP_WATER' || tile.value === 'SHALLOW_WATER' || tile.value === 'STONE' || tile.value === 'COBBLESTONE' || tile.value === 'SNOW') return false;
+        } else if (this.camera.renderingMode === 'mine') {
+            // In mine mode, STONE and WOOD tiles are impassable
+            if (tile.value === 'STONE' || tile.value === 'WOOD') return false;
 
-            // Check for trees (impassable when present and alive, but passable when cut down)
-            if (tile.trees && tile.trees.length > 0) {
-                // Allow passage if all trees are cut down (destroyed/health <= 0)
-                const hasLivingTrees = tile.trees.some(tree => tree.getHealth() > 0);
-                if (hasLivingTrees) return false;
-            }
-
-            // Check for living cactus - these are impassable and will cause bounce-back with damage
-            if (tile.cactus && tile.cactus.length > 0) {
-                const hasLivingCactus = tile.cactus.some(cactus => cactus.getHealth() > 0);
-                if (hasLivingCactus) return false; // Block movement onto living cactus
-            }
-
-            // Check for village structures (POIs and NPCs)
+            // Check for mine structures (bandits, chests, torches, mine entrances)
             if (tile.villageStructures && tile.villageStructures.length > 0) {
                 for (const structure of tile.villageStructures) {
-                    // Check POI passability
-                    if (structure.poi && !structure.poi.passable) {
-                        return false; // Impassable POI (like markets, windmills, chests)
+                    // In mine mode, mine entrances should be impassable
+                    if (structure.poi && structure.poi.type === 'mine_entrance') {
+                        return false;
                     }
-
+                    // Check POI passability (chests, torches)
+                    if (structure.poi && !structure.poi.passable) {
+                        return false; // Impassable POI (like chests)
+                    }
                     // Check NPC passability - NPCs are impassable unless dead
                     if (structure.npc && !structure.npc.isDead()) {
-                        return false; // Living NPCs block movement
+                        return false; // Living NPCs (bandits, monsters) block movement
                     }
                 }
             }
-
             return true;
         }
+
+        return true; // Default to passable
     }
 
     private canMoveFromMud(): boolean {
@@ -151,14 +168,14 @@ export class Movement {
 
         // Check if we can move to the new position
         if (attemptedMove) {
-            const targetTile = this.getCurrentTile(newPosition.x / this.TILE_SIZE, newPosition.y / this.TILE_SIZE);
+            const targetTile = this.getCurrentTile(Math.floor(newPosition.x / this.TILE_SIZE), Math.floor(newPosition.y / this.TILE_SIZE));
 
             // Check if movement is blocked by living cactus specifically (only in world mode)
             const isBlockedByCactus = this.camera.renderingMode === 'world' &&
                                     targetTile?.cactus && targetTile.cactus.length > 0 &&
                                     targetTile.cactus.some(cactus => cactus.getHealth() > 0);
 
-            if (this.canMoveToTile(targetTile)) {
+            if (this.canMoveToTile(targetTile ?? null)) {
                 player.position = newPosition;
                 actuallyMoved = true;
             } else if (isBlockedByCactus) {
@@ -183,10 +200,27 @@ export class Movement {
                             blockReason += ` (blocked by ${structureTypes})`;
                         }
                     }
+                } else if (this.camera.renderingMode === 'mine') {
+                    // In mine mode, show mine-specific blocking info
+                    if (targetTile?.value === 'STONE') {
+                        blockReason = 'stone wall (impassable)';
+                    } else if (targetTile?.villageStructures) {
+                        const blockingStructures = targetTile.villageStructures.filter(s =>
+                            (s.poi && !s.poi.passable) ?? (s.npc && !s.npc.isDead())
+                        );
+                        if (blockingStructures.length > 0) {
+                            const structureTypes = blockingStructures.map(s =>
+                                s.poi ? s.poi.type : s.npc ? `${s.npc.type} Bandit` : 'unknown'
+                            ).join(', ');
+                            blockReason += ` (blocked by ${structureTypes})`;
+                        }
+                    }
                 } else {
                     // In dungeon mode, only show basic tile blocking
                     if (targetTile?.value === 'VOID') {
                         blockReason = 'void (impassable)';
+                    } else if (targetTile?.value === 'STONE') {
+                        blockReason = 'stone wall (impassable)';
                     }
                 }
 
@@ -230,6 +264,14 @@ export class Movement {
                     ).join(', ');
                     tileInfo += ` (Structures: ${structures})`;
                 }
+            } else if (this.camera.renderingMode === 'mine') {
+                // In mine mode, show mine-specific info
+                if (currentTile?.villageStructures && currentTile.villageStructures.length > 0) {
+                    const mineStructures = currentTile.villageStructures.map(s =>
+                        s.poi ? s.poi.type : s.npc ? `${s.npc.type} Bandit` : 'unknown'
+                    ).join(', ');
+                    tileInfo += ` (Mine: ${mineStructures})`;
+                }
             } else {
                 // In dungeon mode, show dungeon-specific info
                 if (currentTile?.villageStructures && currentTile.villageStructures.length > 0) {
@@ -251,6 +293,8 @@ export class Movement {
     private getCurrentTile(tileX: number, tileY: number) {
         if (this.camera.renderingMode === 'dungeon') {
             return this.dungeon.getTile(tileX, tileY);
+        } else if (this.camera.renderingMode === 'mine') {
+            return this.mine.getTile(tileX, tileY);
         } else {
             return this.world.getTile(tileX, tileY);
         }
@@ -275,6 +319,63 @@ export class Movement {
             if (this.player.health <= 0) {
                 console.log(`💀 Player died from cactus damage!`);
             }
+        }
+    }
+
+    // Check if a tile is passable for movement
+    public isTilePassable(tileX: number, tileY: number, renderingMode: 'world' | 'dungeon' | 'mine' = 'world'): boolean {
+        let tile;
+
+        // Get tile from appropriate source based on rendering mode
+        if (renderingMode === 'dungeon') {
+            tile = this.dungeon.getTile(tileX, tileY);
+        } else if (renderingMode === 'mine') {
+            tile = this.mine.getTile(tileX, tileY);
+        } else {
+            tile = this.world.getTile(tileX, tileY);
+        }
+
+        if (!tile) return false;
+
+        // Check basic tile passability
+        if (renderingMode === 'dungeon' || renderingMode === 'mine') {
+            // Underground: STONE tiles are impassable, DIRT/COBBLESTONE are passable
+            if (tile.value === 'STONE') return false;
+
+            // Check for impassable structures in underground areas
+            if (tile.villageStructures && tile.villageStructures.length > 0) {
+                for (const structure of tile.villageStructures) {
+                    // In mine mode, mine entrances should be impassable
+                    if (renderingMode === 'mine' && structure.poi && structure.poi.type === 'mine_entrance') {
+                        return false;
+                    }
+                    // In dungeon mode, dungeon entrances should be impassable
+                    if (renderingMode === 'dungeon' && structure.poi && structure.poi.type === 'dungeon_entrance') {
+                        return false;
+                    }
+                    // Other impassable POIs and NPCs
+                    if (structure.poi && !structure.poi.passable) return false;
+                    if (structure.npc && !structure.npc.isDead()) return false;
+                }
+            }
+            return true;
+        } else {
+            // World surface movement rules
+            const impassableTypes = ['DEEP_WATER', 'SHALLOW_WATER', 'STONE', 'COBBLESTONE', 'SNOW'];
+            if (impassableTypes.includes(tile.value)) return false;
+
+            // Check for living structures that block movement
+            if (tile.trees?.some(tree => tree.getHealth() > 0)) return false;
+            if (tile.cactus?.some(cactus => cactus.getHealth() > 0)) return false;
+
+            // Check for impassable village structures
+            if (tile.villageStructures && tile.villageStructures.length > 0) {
+                for (const structure of tile.villageStructures) {
+                    if (structure.poi && !structure.poi.passable) return false;
+                    if (structure.npc && !structure.npc.isDead()) return false;
+                }
+            }
+            return true;
         }
     }
 }

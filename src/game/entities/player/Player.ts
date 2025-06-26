@@ -6,6 +6,7 @@ export interface PlayerConfig {
   position: Position;
   health?: number;
   attackDamage?: number;
+  name?: string;
 }
 
 export class Player {
@@ -14,6 +15,7 @@ export class Player {
   public maxHealth = 100;
   public attackDamage = 5;
   public inventory: Inventory;
+  public name: string; // Player name
   public lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
   public facingDirection: 'up' | 'down' | 'left' | 'right' = 'down';
   public isMoving = false;
@@ -34,11 +36,16 @@ export class Player {
   private readonly attackFrameCount = 4; // 4 frames for attack animation
   private cactusDamageCooldown = 0; // Cooldown to prevent repeated cactus damage
 
+  // Combat state tracking for health regeneration
+  private lastDamageTime = 0;
+  private readonly combatRegenDelay = 10000; // 10 seconds after taking damage before regen resumes
+
   constructor(config: PlayerConfig) {
     this.position = { ...config.position };
     this.health = config.health ?? 100;
     this.maxHealth = this.health;
     this.attackDamage = config.attackDamage ?? 5;
+    this.name = config.name ?? 'Hero';
     this.inventory = new Inventory();
 
     void this.loadSprite();
@@ -74,12 +81,55 @@ export class Player {
     }
   }
 
-  public update(deltaTime: number): void {
+    public update(deltaTime: number, wearableItems?: { type: string }[]): void {
     if (!this.isLoaded) return;
 
     this.updateAnimation(deltaTime);
     this.updateAttackAnimation(deltaTime);
     this.updateCactusCooldown(deltaTime); // Update cactus damage cooldown
+    this.updateHealthRegeneration(deltaTime, wearableItems); // Update health regeneration
+  }
+
+  private updateHealthRegeneration(deltaTime: number, wearableItems?: { type: string }[]): void {
+    // Check if player is in combat (has taken damage recently)
+    const now = Date.now();
+    const timeSinceLastDamage = now - this.lastDamageTime;
+
+    // Don't regenerate health if player has taken damage recently (in combat)
+    if (timeSinceLastDamage < this.combatRegenDelay) {
+      return;
+    }
+
+    // Base health regeneration: 5 health per minute
+    let baseRegenRate = 5 / 60; // 5 health per 60 seconds = 0.083 health per second
+
+    // Check for magical wearable items that boost regeneration
+    const hasMagicalItem = this.hasMagicalWearableItem(wearableItems);
+
+    if (hasMagicalItem) {
+      // Magical items boost regeneration to 15 health per minute
+      baseRegenRate = 15 / 60; // 15 health per 60 seconds = 0.25 health per second
+    }
+
+    // Apply regeneration based on delta time
+    const healthToRegenerate = baseRegenRate * deltaTime;
+
+    if (this.health < this.maxHealth && healthToRegenerate > 0) {
+      this.health = Math.min(this.maxHealth, this.health + healthToRegenerate);
+    }
+  }
+
+  private hasMagicalWearableItem(wearableItems?: { type: string }[]): boolean {
+    if (!wearableItems) return false;
+
+    // Check for magical wearable items: rings, necklaces, crowns
+    const magicalItemTypes = ['ring', 'necklace', 'crown', 'magical_ring', 'magical_necklace', 'magical_crown'];
+
+    return wearableItems.some(item =>
+      item && magicalItemTypes.some(magicalType =>
+        item.type.toLowerCase().includes(magicalType)
+      )
+    );
   }
 
   private updateAnimation(deltaTime: number): void {
@@ -249,6 +299,9 @@ export class Player {
     } else {
       console.log(`Player took ${actualDamage} damage. Health: ${this.health}/${this.maxHealth}`);
     }
+
+    // Update last damage time
+    this.lastDamageTime = Date.now();
   }
 
   public heal(amount: number): void {
@@ -326,5 +379,13 @@ export class Player {
     } else {
       console.log('Player stopped blocking');
     }
+  }
+
+  public setName(name: string): void {
+    this.name = name.trim() || 'Hero';
+  }
+
+  public getName(): string {
+    return this.name;
   }
 }

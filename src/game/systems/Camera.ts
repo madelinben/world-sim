@@ -3,7 +3,7 @@ import { WorldGenerator } from '../world/WorldGenerator';
 import { UIManager } from '../ui/UIManager';
 import type { InventoryItem } from '../entities/inventory/Inventory';
 
-export type RenderingMode = 'world' | 'dungeon';
+export type RenderingMode = 'world' | 'dungeon' | 'mine';
 
 export class Camera {
     public position: Position;
@@ -15,6 +15,7 @@ export class Camera {
     public uiManager: UIManager;
     public renderingMode: RenderingMode = 'world';
     public dungeonEntrancePosition: Position | null = null;
+    public mineEntrancePosition: Position | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -26,6 +27,10 @@ export class Camera {
 
     public setDungeonEntrance(position: Position): void {
         this.dungeonEntrancePosition = position;
+    }
+
+    public setMineEntrance(position: Position): void {
+        this.mineEntrancePosition = position;
     }
 
     public centerOnPlayer(): void {
@@ -41,7 +46,14 @@ export class Camera {
     }
 
     public toggleRenderingMode(): void {
-        this.renderingMode = this.renderingMode === 'world' ? 'dungeon' : 'world';
+        // Cycle through world -> dungeon -> mine -> world
+        if (this.renderingMode === 'world') {
+            this.renderingMode = 'dungeon';
+        } else if (this.renderingMode === 'dungeon') {
+            this.renderingMode = 'mine';
+        } else {
+            this.renderingMode = 'world';
+        }
         console.log(`🔄 Toggled to ${this.renderingMode} rendering mode`);
     }
 

@@ -1,4 +1,4 @@
-import type { GameState, PlayerState } from './types';
+import type { GameState, PlayerState, VillageStructure, POILike, NPCLike, Tile } from './types';
 import { GameLoop } from './GameLoop';
 import { Controls } from '~/game/systems/Controls';
 import { Movement } from '~/game/systems/Movement';
@@ -10,7 +10,10 @@ import { Player as PlayerEntity } from '~/game/entities/player/Player';
 import { UIManager } from '../ui/UIManager';
 import { Inventory, type InventoryItem } from '../entities/inventory/Inventory';
 import { Dungeon } from '../world/Dungeon';
+import { Mine } from '../world/Mine';
+import { LightingSystem } from '../systems/LightingSystem';
 import { Chest } from '../entities/poi/Chest';
+import { type NPC } from '../entities/npc/NPC';
 
 import { PlayerScoreSystem } from '~/game/systems/PlayerScoreSystem';
 import { getAnimalSound } from '../translations/animals';
@@ -42,29 +45,29 @@ export class Game {
     private movement!: Movement;
     private world!: World;
     private dungeon!: Dungeon;
+    private mine!: Mine;
     private animationSystem!: AnimationSystem;
+    private uiManager!: UIManager;
+    private playerScoreSystem!: PlayerScoreSystem;
+    private lightingSystem!: LightingSystem;
 
-    private scoreSystem!: PlayerScoreSystem;
     private canvas: HTMLCanvasElement;
-    private lastPlayerPos = { x: 0, y: 0 };
-    private lastNPCs = '';
-    private lastPOIs = '';
     private player!: PlayerEntity;
-    private pendingPortalReturn = false;
     private portalDiscoveryShown = false; // Track if portal discovery message was shown
 
-    constructor(canvas: HTMLCanvasElement, seed?: string) {
+    constructor(canvas: HTMLCanvasElement, seed?: string, playerName?: string) {
         this.canvas = canvas;
         this.controls = new Controls(canvas);
-        this.initializeGame(seed);
+        this.initializeGame(seed, playerName);
     }
 
-    private initializeGame(seed?: string): void {
+    private initializeGame(seed?: string, playerName?: string): void {
         // Initialize player entity
         this.player = new PlayerEntity({
             position: { x: 0, y: 0 },
             health: 100,
-            attackDamage: 5
+            attackDamage: 5,
+            name: playerName
         });
 
         // Initialize game state
@@ -86,13 +89,18 @@ export class Game {
         this.camera = new Camera(this.canvas);
         this.world = new World(this.camera, new WorldGenerator(seed));
         this.dungeon = new Dungeon(seed);
-        this.movement = new Movement(this.world, this.dungeon, this.camera);
+        this.mine = new Mine(seed);
+        this.movement = new Movement(this.world, this.dungeon, this.mine, this.camera);
         this.animationSystem = new AnimationSystem();
-
-        this.scoreSystem = new PlayerScoreSystem();
+        this.uiManager = new UIManager(this.canvas);
+        this.playerScoreSystem = new PlayerScoreSystem();
+        this.lightingSystem = new LightingSystem();
 
         // Connect UI systems
         this.camera.uiManager.setInventory(this.player.inventory);
+
+        // Set player name in UI manager
+        this.camera.uiManager.setPlayerName(this.player.getName());
 
         // Connect world with animation system
         this.world.setAnimationSystem(this.animationSystem);
@@ -112,6 +120,24 @@ export class Game {
             // Always set direction and log facing tile, regardless of whether movement succeeded
             this.player.setDirection(direction);
             this.logFacingTile();
+        });
+
+        // Connect lighting system to world systems
+        this.dungeon.setLightingSystem(this.lightingSystem);
+        this.mine.setLightingSystem(this.lightingSystem);
+        this.world.setLightingSystem(this.lightingSystem);
+
+        // Set up tile provider for lighting system
+        this.lightingSystem.setTileProvider((x: number, y: number, mode: 'world' | 'dungeon' | 'mine') => {
+            if (mode === 'dungeon') {
+                const tile = this.dungeon.getTile(x, y);
+                return tile as Tile | null;
+            } else if (mode === 'mine') {
+                return this.mine.getTile(x, y);
+            } else {
+                const tile = this.world.getTile(x, y);
+                return tile as Tile | null;
+            }
         });
 
         // Initialize game loop
@@ -135,8 +161,11 @@ export class Game {
 
         // Check if any UI is visible - if so, pause game logic updates
         if (this.camera.uiManager.isAnyUIVisible()) {
+            // Get wearable items from UI manager for health regeneration
+            const wearableItems = this.camera.uiManager.getWearableItems();
+
             // Only update player animation and clear controls when UI is open
-            this.player.update(deltaTime);
+            this.player.update(deltaTime, wearableItems);
             this.controls.clearJustPressed();
             return;
         }
@@ -147,8 +176,16 @@ export class Game {
         // Update movement system
         this.movement.update(this.gameState.player, this.controls);
 
-        // Update player animation
-        this.player.update(deltaTime);
+        // Get wearable items from UI manager
+        const wearableItems = this.camera.uiManager.getWearableItems();
+
+        // Update player animation and health regeneration
+        this.player.update(deltaTime, wearableItems);
+
+        // Debug: Log player health every few seconds when low
+        if (this.player.health < 50) {
+            console.log(`⚠️ Player health low: ${this.player.health.toFixed(1)}/${this.player.maxHealth}`);
+        }
 
         // Update UI animations
         this.camera.uiManager.update(deltaTime);
@@ -156,10 +193,16 @@ export class Game {
         // Update camera
         this.camera.update(this.gameState.player.position);
 
-        // Update world or dungeon based on rendering mode
-        const inventoryItems = this.player.getInventoryItems().filter(item => item !== null);
+        // Update systems
+        this.animationSystem.update(deltaTime);
+        this.lightingSystem.update(deltaTime);
+
+        // Update underground systems
+        const inventoryItems = this.gameState.player.inventory.filter(item => item !== null);
         if (this.camera.renderingMode === 'dungeon') {
             this.dungeon.update(deltaTime, this.gameState.player.position, inventoryItems, this.camera);
+        } else if (this.camera.renderingMode === 'mine') {
+            this.mine.update(deltaTime, this.gameState.player.position, inventoryItems, this.camera);
         } else {
             this.world.update(deltaTime, this.gameState.player.position, inventoryItems);
         }
@@ -191,6 +234,8 @@ export class Game {
         // Render based on camera rendering mode
         if (this.camera.renderingMode === 'dungeon') {
             this.dungeon.render(ctx, this.camera);
+        } else if (this.camera.renderingMode === 'mine') {
+            this.mine.render(ctx, this.camera);
         } else {
             this.world.render(ctx, this.camera);
         }
@@ -206,9 +251,15 @@ export class Game {
         } else if (this.camera.renderingMode === 'dungeon') {
             // Render dungeon health bars when in dungeon mode
             this.dungeon.renderHealthBars(ctx, this.camera);
+        } else if (this.camera.renderingMode === 'mine') {
+            // Render mine health bars when in mine mode
+            this.mine.renderHealthBars(ctx, this.camera);
         }
 
         this.renderPlayerHealthBar(ctx);
+
+        // Render lighting effects and darkness overlay
+        this.lightingSystem.renderDarknessOverlay(ctx, this.camera, this.camera.renderingMode);
 
         // Render UI Manager with player inventory data
         const playerInventory = this.player.getInventoryItems();
@@ -303,13 +354,21 @@ export class Game {
 
         // Handle tombstone UI navigation and actions
         if (this.camera.uiManager.isTombstoneUIVisible()) {
-            // Handle tombstone navigation with left/right arrows
+            // Handle tombstone navigation with arrow keys (all four directions)
             if (this.controls.wasKeyJustPressed('left')) {
                 this.camera.uiManager.navigateTombstoneInventory('left');
                 return;
             }
             if (this.controls.wasKeyJustPressed('right')) {
                 this.camera.uiManager.navigateTombstoneInventory('right');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('up')) {
+                this.camera.uiManager.navigateTombstoneInventory('up');
+                return;
+            }
+            if (this.controls.wasKeyJustPressed('down')) {
+                this.camera.uiManager.navigateTombstoneInventory('down');
                 return;
             }
 
@@ -442,6 +501,20 @@ export class Game {
             this.camera.uiManager.toggleInventoryUI();
         }
 
+        // DEBUG: Force player death for testing (K key)
+        if (this.controls.wasKeyJustPressed('k')) {
+            console.log('🧪 DEBUG: Forcing player death for tombstone testing');
+            this.player.health = 0;
+            console.log(`🧪 DEBUG: Player health set to ${this.player.health}, will trigger death on next update`);
+        }
+
+        // DEBUG: Test player damage and health bar (H key)
+        if (this.controls.wasKeyJustPressed('h')) {
+            console.log('🧪 DEBUG: Testing player damage and health bar');
+            this.player.takeDamage(10);
+            console.log(`🧪 DEBUG: Player took 10 damage. Health: ${this.player.health}/${this.player.maxHealth}`);
+        }
+
         // Update player direction if movement keys are pressed (even if no movement happens)
         if (this.controls.isKeyPressed('up')) {
             this.player.setDirection('up');
@@ -494,86 +567,93 @@ export class Game {
         const tileX = Math.floor(facingPos.x / WorldGenerator.TILE_SIZE);
         const tileY = Math.floor(facingPos.y / WorldGenerator.TILE_SIZE);
 
-        const tile = this.world.getTile(tileX, tileY);
         console.log(`Player attack damage: ${this.player.attackDamage}`);
-        console.log(`Attacking tile at (${tileX}, ${tileY}): ${tile?.value}`);
+        console.log(`Attacking tile at (${tileX}, ${tileY}) in ${this.camera.renderingMode} mode`);
 
-        // Check for trees
-        if (tile?.trees && tile.trees.length > 0) {
-            const tree = tile.trees[0];
-            if (tree) {
-                console.log(`Tree health before attack: ${tree.getHealth()}/${tree.getMaxHealth()}`);
-                const result = tree.takeDamage(this.player.attackDamage);
+        if (this.camera.renderingMode === 'world') {
+            // World mode attacks - trees, cactus, and NPCs
+            const tile = this.world.getTile(tileX, tileY);
 
-                if (result.destroyed) {
-                    console.log(`🌳 Tree destroyed! Dropped ${result.dropValue} ${result.dropType}`);
-                    const added = this.player.addToInventory(result.dropType, result.dropValue);
-                    if (added) {
-                        console.log(`✅ Added ${result.dropValue} ${result.dropType} to inventory`);
+            // Check for trees
+            if (tile?.trees && tile.trees.length > 0) {
+                const tree = tile.trees[0];
+                if (tree) {
+                    console.log(`Tree health before attack: ${tree.getHealth()}/${tree.getMaxHealth()}`);
+                    const result = tree.takeDamage(this.player.attackDamage);
+
+                    if (result.destroyed) {
+                        console.log(`🌳 Tree destroyed! Dropped ${result.dropValue} ${result.dropType}`);
+                        const added = this.player.addToInventory(result.dropType, result.dropValue);
+                        if (added) {
+                            console.log(`✅ Added ${result.dropValue} ${result.dropType} to inventory`);
+                        }
+
+                        // Tree is now a broken stump (CUT_DOWN stage), don't remove it
+                        // The tile remains passable but shows the broken tree sprite
+                        console.log(`Tree cut down - now showing broken tree stump at (${tileX}, ${tileY})`);
+                    } else {
+                        console.log(`Tree took ${this.player.attackDamage} damage. Health: ${tree.getHealth()}/${tree.getMaxHealth()}`);
                     }
-
-                    // Tree is now a broken stump (CUT_DOWN stage), don't remove it
-                    // The tile remains passable but shows the broken tree sprite
-                    console.log(`Tree cut down - now showing broken tree stump at (${tileX}, ${tileY})`);
-                } else {
-                    console.log(`Tree took ${this.player.attackDamage} damage. Health: ${tree.getHealth()}/${tree.getMaxHealth()}`);
                 }
+                return;
             }
-        }
-        // Check for cactus
-        else if (tile?.cactus && tile.cactus.length > 0) {
-            const cactus = tile.cactus[0];
-            if (cactus) {
-                console.log(`Cactus health before attack: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
-                const result = cactus.takeDamage(this.player.attackDamage);
+            // Check for cactus
+            else if (tile?.cactus && tile.cactus.length > 0) {
+                const cactus = tile.cactus[0];
+                if (cactus) {
+                    console.log(`Cactus health before attack: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
+                    const result = cactus.takeDamage(this.player.attackDamage);
 
-                if (result.destroyed) {
-                    console.log(`🌵 Cactus destroyed! Dropped ${result.dropValue} ${result.dropType}`);
-                    const added = this.player.addToInventory(result.dropType, result.dropValue);
-                    if (added) {
-                        console.log(`✅ Added ${result.dropValue} ${result.dropType} to inventory`);
+                    if (result.destroyed) {
+                        console.log(`🌵 Cactus destroyed! Dropped ${result.dropValue} ${result.dropType}`);
+                        const added = this.player.addToInventory(result.dropType, result.dropValue);
+                        if (added) {
+                            console.log(`✅ Added ${result.dropValue} ${result.dropType} to inventory`);
+                        }
+
+                        // Remove cactus from AnimationSystem
+                        const tileKey = `${tileX},${tileY}`;
+                        this.animationSystem.removeCactus(tileKey, cactus);
+
+                        // Remove cactus completely from tile and convert to SAND
+                        tile.cactus = tile.cactus.filter(c => c !== cactus);
+                        if (tile.cactus.length === 0) {
+                            delete tile.cactus;
+                            tile.value = 'SAND';
+                            this.world.invalidateCache();
+                            console.log(`Cactus completely removed - tile converted to SAND at (${tileX}, ${tileY})`);
+                        }
+                    } else {
+                        console.log(`Cactus took ${this.player.attackDamage} damage. Health: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
                     }
-
-                    // Remove cactus from AnimationSystem
-                    const tileKey = `${tileX},${tileY}`;
-                    this.animationSystem.removeCactus(tileKey, cactus);
-
-                    // Remove cactus completely from tile and convert to SAND
-                    tile.cactus = tile.cactus.filter(c => c !== cactus);
-                    if (tile.cactus.length === 0) {
-                        delete tile.cactus;
-                        tile.value = 'SAND';
-                        this.world.invalidateCache();
-                        console.log(`Cactus completely removed - tile converted to SAND at (${tileX}, ${tileY})`);
-                    }
-                } else {
-                    console.log(`Cactus took ${this.player.attackDamage} damage. Health: ${cactus.getHealth()}/${cactus.getMaxHealth()}`);
                 }
+                return;
             }
-        }
-        // Check for NPCs
-        else {
+
+            // Check for world NPCs
             const npc = this.world.getNPCAt(tileX, tileY);
             if (npc) {
                 // Track score based on NPC category and village area
-                const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
+                const nearestVillage = this.playerScoreSystem.findNearestVillage(this.gameState.player.position);
 
-                if (nearestVillage && this.scoreSystem.isInVillageArea(this.gameState.player.position, nearestVillage)) {
+                if (nearestVillage && this.playerScoreSystem.isInVillageArea(this.gameState.player.position, nearestVillage)) {
                     if (npc.category === 'monster') {
                         // Positive score for killing monsters in village area
-                        this.scoreSystem.onMonsterKilled(nearestVillage);
+                        this.playerScoreSystem.onMonsterKilled(nearestVillage);
                     } else if (npc.category === 'animal') {
                         // Negative score for attacking village animals
-                        this.scoreSystem.onAnimalAttacked(nearestVillage);
+                        this.playerScoreSystem.onAnimalAttacked(nearestVillage);
                     } else if (npc.category === 'friendly') {
                         // Negative score for attacking village traders
-                        this.scoreSystem.onTraderAttacked(nearestVillage);
+                        this.playerScoreSystem.onTraderAttacked(nearestVillage);
                     }
                 }
 
+                console.log(`🗡️ Attacking ${npc.type} (${npc.health}/${npc.maxHealth} HP)`);
                 npc.takeDamage(this.player.attackDamage);
 
                 if (npc.isDead()) {
+                    console.log(`💀 ${npc.type} defeated!`);
                     // Get drops and add to inventory
                     const drops = this.world.removeDeadNPCAt(tileX, tileY);
                     for (const drop of drops) {
@@ -585,10 +665,71 @@ export class Game {
                         }
                     }
                 }
-            } else {
-                console.log('Nothing to attack in that direction');
+                return;
+            }
+
+        } else if (this.camera.renderingMode === 'dungeon') {
+            // Dungeon mode attacks - monsters only
+            const tile = this.dungeon.getTile(tileX, tileY);
+            if (tile?.villageStructures) {
+                for (const structure of tile.villageStructures) {
+                    if (structure.npc && !structure.npc.isDead()) {
+                        const npc = structure.npc as NPC;
+                        console.log(`🗡️ Attacking ${npc.type} (${npc.health}/${npc.maxHealth} HP) in dungeon`);
+                        npc.takeDamage(this.player.attackDamage);
+
+                        if (npc.isDead()) {
+                            console.log(`💀 ${npc.type} defeated in dungeon!`);
+                            // Monsters in dungeons drop their inventory items directly to player
+                            for (let i = 0; i < 9; i++) {
+                                const item = npc.inventory.getItem(i);
+                                if (item) {
+                                    const added = this.player.addToInventory(item.type, item.quantity);
+                                    if (added) {
+                                        console.log(`✅ Added ${item.quantity} ${item.type} from ${npc.type}`);
+                                    } else {
+                                        console.log(`❌ Inventory full! Could not add ${item.quantity} ${item.type}`);
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+
+        } else if (this.camera.renderingMode === 'mine') {
+            // Mine mode attacks - bandits only
+            const tile = this.mine.getTile(tileX, tileY);
+            if (tile?.villageStructures) {
+                for (const structure of tile.villageStructures) {
+                    if (structure.npc && !structure.npc.isDead()) {
+                        const npc = structure.npc as NPC;
+                        console.log(`🗡️ Attacking ${npc.type} (${npc.health}/${npc.maxHealth} HP) in mine`);
+                        npc.takeDamage(this.player.attackDamage);
+
+                        if (npc.isDead()) {
+                            console.log(`💀 ${npc.type} defeated in mine!`);
+                            // Bandits in mines drop their inventory items directly to player
+                            for (let i = 0; i < 9; i++) {
+                                const item = npc.inventory.getItem(i);
+                                if (item) {
+                                    const added = this.player.addToInventory(item.type, item.quantity);
+                                    if (added) {
+                                        console.log(`✅ Added ${item.quantity} ${item.type} from ${npc.type}`);
+                                    } else {
+                                        console.log(`❌ Inventory full! Could not add ${item.quantity} ${item.type}`);
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
             }
         }
+
+        console.log('Nothing to attack in that direction');
     }
 
     private handleInteract(): void {
@@ -603,9 +744,14 @@ export class Game {
         const tileY = Math.floor(facingPos.y / WorldGenerator.TILE_SIZE);
 
         // Get tile from appropriate source based on rendering mode
-        const tile = this.camera.renderingMode === 'dungeon' ?
-            this.dungeon.getTile(tileX, tileY) :
-            this.world.getTile(tileX, tileY);
+        let tile;
+        if (this.camera.renderingMode === 'dungeon') {
+            tile = this.dungeon.getTile(tileX, tileY);
+        } else if (this.camera.renderingMode === 'mine') {
+            tile = this.mine.getTile(tileX, tileY);
+        } else {
+            tile = this.world.getTile(tileX, tileY);
+        }
 
         console.log(`Interacting with tile at (${tileX}, ${tileY}):`, tile?.value, `Mode: ${this.camera.renderingMode}`);
 
@@ -664,6 +810,23 @@ export class Game {
                 return;
             }
 
+            if (poi?.type === 'mine_entrance') {
+                console.log('⛏️ Interacting with mine entrance - entering mine');
+
+                // Store entrance position for mine generation
+                const entranceWorldPos = { x: tileX * WorldGenerator.TILE_SIZE, y: tileY * WorldGenerator.TILE_SIZE };
+                this.camera.setMineEntrance(entranceWorldPos);
+                this.mine.setEntrancePosition(entranceWorldPos);
+                this.camera.setRenderingMode('mine');
+
+                // Find nearest unoccupied tile to entrance position in mine
+                const spawnPosition = this.findNearestUnoccupiedTile(entranceWorldPos, 'mine');
+                this.player.position = spawnPosition;
+                this.gameState.player.position = spawnPosition;
+                this.camera.centerOnPlayer();
+                return;
+            }
+
             // Check for NPCs (trader interaction)
             const npc = this.world.getNPCAt(tileX, tileY);
             if (npc && npc.category === 'friendly') {
@@ -673,11 +836,11 @@ export class Game {
                 const greeting = getTraderGreeting(npc.type);
 
                 // Find nearest village and get trader comment based on score
-                const nearestVillage = this.scoreSystem.findNearestVillage(this.gameState.player.position);
+                const nearestVillage = this.playerScoreSystem.findNearestVillage(this.gameState.player.position);
                 let villageName = "Unknown Village";
 
                 if (nearestVillage) {
-                    const villageScore = this.scoreSystem.getVillageScore(nearestVillage);
+                    const villageScore = this.playerScoreSystem.getVillageScore(nearestVillage);
                     if (villageScore) {
                         villageName = villageScore.villageName;
                     }
@@ -719,35 +882,68 @@ export class Game {
                 return;
             }
 
-            // Check for other interactable structures
-            if (tile?.trees && tile.trees.length > 0) {
+            // Check for other interactable structures (world tile specific properties)
+            if (tile && 'trees' in tile && tile.trees && tile.trees.length > 0) {
                 console.log('Interacting with tree - could harvest fruit, check growth, etc.');
-            } else if (tile?.cactus && tile.cactus.length > 0) {
+            } else if (tile && 'cactus' in tile && tile.cactus && tile.cactus.length > 0) {
                 console.log('Interacting with cactus - could harvest water, check growth, etc.');
             } else {
                 console.log('Nothing to interact with in that direction');
             }
-        } else {
-            // Dungeon-specific interactions
+        } else if (this.camera.renderingMode === 'dungeon' || this.camera.renderingMode === 'mine') {
+            // Underground interactions (dungeon or mine)
 
-            // Check for dungeon POI structures
-            if (tile?.villageStructures) {
+            // Check for tombstone interaction first (works in both dungeon and mine)
+            let tombstone = null;
+            if (this.camera.renderingMode === 'dungeon') {
+                tombstone = this.dungeon.getTombstoneAt(tileX, tileY);
+            } else if (this.camera.renderingMode === 'mine') {
+                tombstone = this.mine.getTombstoneAt(tileX, tileY);
+            }
+
+            if (tombstone) {
+                console.log(`Interacting with tombstone: ${tombstone.getDisplayName()}`);
+                this.camera.uiManager.showTombstoneUI(tombstone);
+                return;
+            }
+
+            // Check for underground POI structures
+            if (tile && 'villageStructures' in tile && tile.villageStructures) {
                 for (const structure of tile.villageStructures) {
-                    if (structure.poi) {
+                    if (structure?.poi) {
                         const poi = structure.poi;
 
                         if (poi.type === 'rare_chest') {
                             console.log('🏺 Interacting with rare chest in dungeon');
 
-                                                                                    // Create chest object from POI data
+                            // Create chest object from POI data
                             const chestInventory = poi.customData?.inventory as (InventoryItem | null)[] ?? [];
                             const chestId = poi.customData?.chestId as string ?? `chest_${tileX}_${tileY}`;
 
-                                                        // Create a proper Chest instance for UI interaction
+                            // Create a proper Chest instance for UI interaction
                             const chest = new Chest({
                                 position: poi.position,
                                 inventory: chestInventory,
                                 chestType: 'rare_chest',
+                                chestId: chestId
+                            });
+
+                            this.camera.uiManager.showChestUI(chest);
+                            return;
+                        }
+
+                        if (poi.type === 'normal_chest') {
+                            console.log('📦 Interacting with chest in underground area');
+
+                            // Create chest object from POI data
+                            const chestInventory = poi.customData?.inventory as (InventoryItem | null)[] ?? [];
+                            const chestId = poi.customData?.chestId as string ?? `chest_${tileX}_${tileY}`;
+
+                            // Create a proper Chest instance for UI interaction
+                            const chest = new Chest({
+                                position: poi.position,
+                                inventory: chestInventory,
+                                chestType: 'normal_chest',
                                 chestId: chestId
                             });
 
@@ -769,6 +965,20 @@ export class Game {
                             return;
                         }
 
+                        if (poi.type === 'mine_entrance') {
+                            console.log('⛏️ Interacting with mine entrance - returning to surface');
+                            this.camera.setRenderingMode('world');
+
+                            // Return player to entrance position on surface
+                            if (this.camera.mineEntrancePosition) {
+                                const spawnPosition = this.findNearestUnoccupiedTile(this.camera.mineEntrancePosition, 'world');
+                                this.player.position = spawnPosition;
+                                this.gameState.player.position = spawnPosition;
+                                this.camera.centerOnPlayer();
+                            }
+                            return;
+                        }
+
                         if (poi.type === 'dungeon_portal' && !poi.customData?.discovered) {
                             console.log('🚪 Interacting with dungeon portal - showing discovery message');
 
@@ -783,8 +993,11 @@ export class Game {
                             });
 
                             // Mark portal as discovered for next interaction
-                            poi.customData = poi.customData || {};
-                            poi.customData.discovered = true;
+                            if (poi.customData) {
+                                poi.customData.discovered = true;
+                            } else {
+                                poi.customData = { discovered: true };
+                            }
                             return;
                         }
 
@@ -812,22 +1025,31 @@ export class Game {
         const tileY = Math.floor(facingPos.y / WorldGenerator.TILE_SIZE);
 
         // Get tile from appropriate source based on rendering mode
-        const tile = this.camera.renderingMode === 'dungeon' ?
-            this.dungeon.getTile(tileX, tileY) :
-            this.world.getTile(tileX, tileY);
+        let tile;
+        if (this.camera.renderingMode === 'dungeon') {
+            tile = this.dungeon.getTile(tileX, tileY);
+        } else if (this.camera.renderingMode === 'mine') {
+            tile = this.mine.getTile(tileX, tileY);
+        } else {
+            tile = this.world.getTile(tileX, tileY);
+        }
 
         // Log facing tile with additional info about structures
         let tileInfo = tile?.value ?? 'UNKNOWN';
 
         if (this.camera.renderingMode === 'world') {
             // World-specific tile info
-            if (tile?.trees && tile.trees.length > 0) {
+            if (tile && 'trees' in tile && tile.trees && tile.trees.length > 0) {
                 const tree = tile.trees[0];
-                tileInfo += ` (Tree: ${tree?.getHealth()}/${tree?.getMaxHealth()} HP)`;
+                if (tree && typeof tree === 'object' && 'getHealth' in tree && 'getMaxHealth' in tree) {
+                    tileInfo += ` (Tree: ${tree.getHealth()}/${tree.getMaxHealth()} HP)`;
+                }
             }
-            if (tile?.cactus && tile.cactus.length > 0) {
+            if (tile && 'cactus' in tile && tile.cactus && tile.cactus.length > 0) {
                 const cactus = tile.cactus[0];
-                tileInfo += ` (Cactus: ${cactus?.getHealth()}/${cactus?.getMaxHealth()} HP, Variant: ${cactus?.getVariant()})`;
+                if (cactus && typeof cactus === 'object' && 'getHealth' in cactus && 'getMaxHealth' in cactus && 'getVariant' in cactus) {
+                    tileInfo += ` (Cactus: ${cactus.getHealth()}/${cactus.getMaxHealth()} HP, Variant: ${String(cactus.getVariant())})`;
+                }
             }
 
             // Check for NPCs in world
@@ -837,9 +1059,9 @@ export class Game {
             }
         } else {
             // Dungeon-specific tile info
-            if (tile?.villageStructures && tile.villageStructures.length > 0) {
-                const dungeonStructures = tile.villageStructures.map(s =>
-                    s.poi ? s.poi.type : s.npc ? `${s.npc.type} Monster` : 'unknown'
+            if (tile && 'villageStructures' in tile && tile.villageStructures && tile.villageStructures.length > 0) {
+                const dungeonStructures = tile.villageStructures.map((structure) =>
+                    structure.poi ? structure.poi.type : structure.npc ? `${structure.npc.type} Monster` : 'unknown'
                 ).join(', ');
                 tileInfo += ` (Dungeon: ${dungeonStructures})`;
             }
@@ -1064,7 +1286,7 @@ export class Game {
                     const villageGridY = Math.floor(checkY / 50);
                     const villageId = `village_${villageGridX}_${villageGridY}`;
 
-                    this.scoreSystem.initializeVillage(villageId, villageName);
+                    this.playerScoreSystem.initializeVillage(villageId, villageName);
                 }
             }
         }
@@ -1075,6 +1297,13 @@ export class Game {
         if (this.player.health <= 0) {
             console.log('💀 Player has died!');
 
+            // Get player's current death position BEFORE any changes
+            const deathPosition = { ...this.player.position };
+            const deathTileX = Math.floor(deathPosition.x / WorldGenerator.TILE_SIZE);
+            const deathTileY = Math.floor(deathPosition.y / WorldGenerator.TILE_SIZE);
+
+            console.log(`💀 Player died at position (${deathPosition.x}, ${deathPosition.y}) - tile (${deathTileX}, ${deathTileY}) in ${this.camera.renderingMode} mode`);
+
             // Get player's current inventory items
             const playerInventory: (InventoryItem | null)[] = [];
             for (let i = 0; i < 9; i++) {
@@ -1082,21 +1311,36 @@ export class Game {
                 playerInventory.push(item);
             }
 
-            // Create tombstone at player's current position
-            this.world.handlePlayerDeath(this.player.position, playerInventory);
+            // Create tombstone at player's death position based on current rendering mode
+            if (this.camera.renderingMode === 'world') {
+                console.log(`💀 Creating tombstone in WORLD at (${deathTileX}, ${deathTileY})`);
+                this.world.handlePlayerDeath(deathPosition, playerInventory, this.player.getName());
+            } else if (this.camera.renderingMode === 'dungeon') {
+                console.log(`💀 Creating tombstone in DUNGEON at (${deathTileX}, ${deathTileY})`);
+                this.dungeon.handlePlayerDeath(deathPosition, playerInventory, this.player.getName());
+            } else if (this.camera.renderingMode === 'mine') {
+                console.log(`💀 Creating tombstone in MINE at (${deathTileX}, ${deathTileY})`);
+                this.mine.handlePlayerDeath(deathPosition, playerInventory, this.player.getName());
+            }
 
             // Clear player inventory by creating a new one
             this.player.inventory = new Inventory();
+
+            // Reset camera rendering mode back to world
+            this.camera.setRenderingMode('world');
 
             // Respawn player at 0,0
             this.player.position = { x: 0, y: 0 };
             this.gameState.player.position = { x: 0, y: 0 };
             this.player.health = this.player.maxHealth; // Full health on respawn
 
-            console.log('🔄 Player respawned at (0, 0) with full health and empty inventory');
+            // Center camera on respawned player
+            this.camera.centerOnPlayer();
+
+            console.log('🔄 Player respawned at (0, 0) with full health, empty inventory, and returned to world surface');
         }
 
-        // Check for dead NPCs in visible area
+        // Check for dead NPCs in visible area based on current rendering mode
         const viewRadiusInTiles = 20;
         const playerTileX = Math.floor(this.gameState.player.position.x / WorldGenerator.TILE_SIZE);
         const playerTileY = Math.floor(this.gameState.player.position.y / WorldGenerator.TILE_SIZE);
@@ -1105,16 +1349,46 @@ export class Game {
             for (let dy = -viewRadiusInTiles; dy <= viewRadiusInTiles; dy++) {
                 const checkX = playerTileX + dx;
                 const checkY = playerTileY + dy;
-                const npc = this.world.getNPCAt(checkX, checkY);
+
+                let npc = null;
+
+                // Get NPC from appropriate tile source based on rendering mode
+                if (this.camera.renderingMode === 'dungeon') {
+                    const tile = this.dungeon.getTile(checkX, checkY);
+                    if (tile?.villageStructures) {
+                        const structure = tile.villageStructures.find(s => s.npc && !s.npc.isDead());
+                        npc = structure?.npc ?? null;
+                    }
+                } else if (this.camera.renderingMode === 'mine') {
+                    const tile = this.mine.getTile(checkX, checkY);
+                    if (tile?.villageStructures) {
+                        const structure = tile.villageStructures.find(s => s.npc && !s.npc.isDead());
+                        npc = structure?.npc ?? null;
+                    }
+                } else {
+                    npc = this.world.getNPCAt(checkX, checkY);
+                }
 
                 if (npc?.isDead()) {
-                    // Handle different death types
+                    // Handle different death types based on rendering mode
                     if (npc.category === 'animal') {
                         // Animals killed by player - add inventory directly to player
-                        this.world.handleAnimalDeath(npc, this.player.position, this.player.inventory);
+                        if (this.camera.renderingMode === 'world') {
+                            this.world.handleAnimalDeath(npc, this.player.position, this.player.inventory);
+                        } else if (this.camera.renderingMode === 'dungeon') {
+                            this.dungeon.handleAnimalDeath(npc, this.player.position, this.player.inventory);
+                        } else if (this.camera.renderingMode === 'mine') {
+                            this.mine.handleAnimalDeath(npc, this.player.position, this.player.inventory);
+                        }
                     } else {
                         // Traders and monsters - create tombstone
-                        this.world.handleNPCDeath(npc, npc.position);
+                        if (this.camera.renderingMode === 'world') {
+                            this.world.handleNPCDeath(npc, npc.position);
+                        } else if (this.camera.renderingMode === 'dungeon') {
+                            this.dungeon.handleNPCDeath(npc, npc.position);
+                        } else if (this.camera.renderingMode === 'mine') {
+                            this.mine.handleNPCDeath(npc, npc.position);
+                        }
                     }
                 }
             }
@@ -1125,35 +1399,81 @@ export class Game {
         const tombstone = this.camera.uiManager.getCurrentTombstone();
         if (!tombstone) return;
 
-        console.log('Taking all items from tombstone...');
-        let itemsTransferred = 0;
+        const dualMode = this.camera.uiManager.getDualInventoryMode();
 
-        // Transfer all items to player inventory
-        for (let i = 0; i < tombstone.inventory.length; i++) {
-            const item = tombstone.inventory[i];
-            if (item) {
-                const added = this.player.addToInventory(item.type, item.quantity);
-                if (added) {
-                    tombstone.removeItem(i);
-                    itemsTransferred++;
-                    console.log(`🎒 Added ${item.quantity}x ${item.type} from tombstone to player inventory`);
-                } else {
-                    console.log(`🎒 Could not add ${item.quantity}x ${item.type} to player inventory - full!`);
+        if (dualMode === 'container') {
+            // Transfer all items from tombstone to player
+            console.log('Taking all items from tombstone...');
+            let itemsTransferred = 0;
+
+            for (let i = 0; i < tombstone.inventory.length; i++) {
+                const item = tombstone.inventory[i];
+                if (item) {
+                    const added = this.player.addToInventory(item.type, item.quantity);
+                    if (added) {
+                        tombstone.removeItem(i);
+                        itemsTransferred++;
+                        console.log(`🎒 Added ${item.quantity}x ${item.type} from tombstone to player inventory`);
+                    } else {
+                        console.log(`🎒 Could not add ${item.quantity}x ${item.type} to player inventory - full!`);
+                        break; // Stop if inventory is full
+                    }
                 }
             }
+
+            console.log(`✅ Transferred ${itemsTransferred} items from tombstone to player`);
+        } else {
+            // Transfer all items from player to tombstone
+            console.log('Transferring all items from player to tombstone...');
+            let itemsTransferred = 0;
+            const playerInventory = this.player.getInventoryItems();
+
+            for (const [i, item] of playerInventory.entries()) {
+                if (item && item.quantity > 0) {
+                    // Find empty slot in tombstone
+                    const emptySlot = tombstone.inventory.findIndex(slot => slot === null);
+                    if (emptySlot !== -1) {
+                        tombstone.inventory[emptySlot] = { ...item }; // Copy item to tombstone
+                        this.player.removeFromInventory(item.type, item.quantity); // Remove from player
+                        console.log(`✅ Transferred ${item.quantity}x ${item.type} from player to tombstone`);
+                        itemsTransferred++;
+                    } else {
+                        console.log(`❌ Tombstone full! Could not transfer ${item.quantity}x ${item.type}`);
+                        break; // Stop if tombstone is full
+                    }
+                }
+            }
+
+            console.log(`✅ Transferred ${itemsTransferred} items from player to tombstone`);
         }
 
-        if (itemsTransferred > 0) {
-            console.log(`✅ Transferred ${itemsTransferred} items from tombstone`);
-        }
+        // Update tombstone inventory in the appropriate system based on rendering mode
+        const tileX = Math.floor(tombstone.position.x / WorldGenerator.TILE_SIZE);
+        const tileY = Math.floor(tombstone.position.y / WorldGenerator.TILE_SIZE);
 
-        // Check if tombstone is empty and remove it
-        if (tombstone.isEmpty()) {
-            const tileX = Math.floor(tombstone.position.x / WorldGenerator.TILE_SIZE);
-            const tileY = Math.floor(tombstone.position.y / WorldGenerator.TILE_SIZE);
-            this.world.removeTombstone(tileX, tileY);
-            this.camera.uiManager.hideTombstoneUI();
-            console.log('💀 Tombstone emptied and removed');
+        if (this.camera.renderingMode === 'world') {
+            // Update world tombstones map
+            if (tombstone.isEmpty()) {
+                this.world.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from world');
+            }
+        } else if (this.camera.renderingMode === 'dungeon') {
+            // Update dungeon tombstone data
+            this.dungeon.updateTombstoneInventory(tileX, tileY, tombstone.inventory);
+            if (tombstone.isEmpty()) {
+                this.dungeon.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from dungeon');
+            }
+        } else if (this.camera.renderingMode === 'mine') {
+            // Update mine tombstone data
+            this.mine.updateTombstoneInventory(tileX, tileY, tombstone.inventory);
+            if (tombstone.isEmpty()) {
+                this.mine.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from mine');
+            }
         }
     }
 
@@ -1161,35 +1481,80 @@ export class Game {
         const tombstone = this.camera.uiManager.getCurrentTombstone();
         if (!tombstone) return;
 
-        const selectedSlot = this.camera.uiManager.getTombstoneSelectedSlot();
-        const item = tombstone.inventory[selectedSlot];
+        const dualMode = this.camera.uiManager.getDualInventoryMode();
 
-        if (!item) {
-            console.log('No item in selected slot');
-            return;
-        }
+        if (dualMode === 'container') {
+            // Transfer selected item from tombstone to player
+            const selectedSlot = this.camera.uiManager.getTombstoneSelectedSlot();
+            const item = tombstone.inventory[selectedSlot];
 
-        console.log(`Taking ${item.quantity}x ${item.type} from tombstone slot ${selectedSlot + 1}...`);
+            if (!item) {
+                console.log('No item selected in tombstone');
+                return;
+            }
 
-        const added = this.player.addToInventory(item.type, item.quantity);
-        if (added) {
-            tombstone.removeItem(selectedSlot);
-            console.log(`🎒 Added ${item.quantity}x ${item.type} from tombstone to player inventory`);
+            console.log(`Taking ${item.quantity}x ${item.type} from tombstone slot ${selectedSlot + 1}...`);
 
-            // Check if tombstone is empty and remove it
-            if (tombstone.isEmpty()) {
-                const tileX = Math.floor(tombstone.position.x / WorldGenerator.TILE_SIZE);
-                const tileY = Math.floor(tombstone.position.y / WorldGenerator.TILE_SIZE);
-                this.world.removeTombstone(tileX, tileY);
-                this.camera.uiManager.hideTombstoneUI();
-                console.log('💀 Tombstone emptied and removed');
+            const added = this.player.addToInventory(item.type, item.quantity);
+            if (added) {
+                tombstone.removeItem(selectedSlot);
+                console.log(`🎒 Added ${item.quantity}x ${item.type} from tombstone to player inventory`);
+            } else {
+                console.log(`🎒 Could not add ${item.quantity}x ${item.type} to player inventory - full!`);
             }
         } else {
-            console.log(`🎒 Could not add ${item.quantity}x ${item.type} to player inventory - full!`);
+            // Transfer selected item from player to tombstone
+            const selectedSlot = this.camera.uiManager.getPlayerSelectedSlot();
+            const playerInventory = this.player.getInventoryItems();
+            const item = playerInventory[selectedSlot];
+
+            if (!item || item.quantity <= 0) {
+                console.log('No item selected in player inventory');
+                return;
+            }
+
+            // Find empty slot in tombstone
+            const emptySlot = tombstone.inventory.findIndex(slot => slot === null);
+            if (emptySlot !== -1) {
+                tombstone.inventory[emptySlot] = { ...item }; // Copy item to tombstone
+                this.player.removeFromInventory(item.type, item.quantity); // Remove from player
+                console.log(`✅ Transferred ${item.quantity}x ${item.type} from player to tombstone`);
+            } else {
+                console.log(`❌ Tombstone full! Could not transfer ${item.quantity}x ${item.type}`);
+            }
+        }
+
+        // Update tombstone inventory in the appropriate system based on rendering mode
+        const tileX = Math.floor(tombstone.position.x / WorldGenerator.TILE_SIZE);
+        const tileY = Math.floor(tombstone.position.y / WorldGenerator.TILE_SIZE);
+
+        if (this.camera.renderingMode === 'world') {
+            // Update world tombstones map
+            if (tombstone.isEmpty()) {
+                this.world.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from world');
+            }
+        } else if (this.camera.renderingMode === 'dungeon') {
+            // Update dungeon tombstone data
+            this.dungeon.updateTombstoneInventory(tileX, tileY, tombstone.inventory);
+            if (tombstone.isEmpty()) {
+                this.dungeon.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from dungeon');
+            }
+        } else if (this.camera.renderingMode === 'mine') {
+            // Update mine tombstone data
+            this.mine.updateTombstoneInventory(tileX, tileY, tombstone.inventory);
+            if (tombstone.isEmpty()) {
+                this.mine.removeTombstone(tileX, tileY);
+                this.camera.uiManager.hideTombstoneUI();
+                console.log('💀 Tombstone emptied and removed from mine');
+            }
         }
     }
 
-    private findNearestUnoccupiedTile(position: { x: number; y: number }, mode: 'world' | 'dungeon'): { x: number; y: number } {
+    private findNearestUnoccupiedTile(position: { x: number; y: number }, mode: 'world' | 'dungeon' | 'mine'): { x: number; y: number } {
         const targetTileX = Math.floor(position.x / WorldGenerator.TILE_SIZE);
         const targetTileY = Math.floor(position.y / WorldGenerator.TILE_SIZE);
 
@@ -1221,14 +1586,31 @@ export class Game {
         return position;
     }
 
-    private isTilePassable(tileX: number, tileY: number, mode: 'world' | 'dungeon'): boolean {
+    private isTilePassable(tileX: number, tileY: number, mode: 'world' | 'dungeon' | 'mine'): boolean {
         if (mode === 'dungeon') {
             const tile = this.dungeon.getTile(tileX, tileY);
-            if (!tile || tile.value === 'VOID') return false;
+            if (!tile || tile.value === 'VOID' || tile.value === 'STONE') return false;
 
             // Check for impassable structures
             if (tile.villageStructures && tile.villageStructures.length > 0) {
                 for (const structure of tile.villageStructures) {
+                    if (structure.poi && !structure.poi.passable) return false;
+                    if (structure.poi && (structure.poi.type === 'mine_entrance' || structure.poi.type === 'dungeon_entrance')) return false;
+                    if (structure.npc && !structure.npc.isDead()) return false;
+                }
+            }
+            return true;
+        } else if (mode === 'mine') {
+            const tile = this.mine.getTile(tileX, tileY);
+            if (!tile || tile.value === 'STONE') return false;
+
+            // Check for impassable structures
+            if (tile && 'villageStructures' in tile && tile.villageStructures && tile.villageStructures.length > 0) {
+                for (const structure of tile.villageStructures) {
+                    // In mine mode, mine entrances should be impassable
+                    if (structure.poi && structure.poi.type === 'mine_entrance') {
+                        return false;
+                    }
                     if (structure.poi && !structure.poi.passable) return false;
                     if (structure.npc && !structure.npc.isDead()) return false;
                 }
@@ -1282,21 +1664,30 @@ export class Game {
                     const structure = tile.villageStructures.find(s => s.npc && !s.npc.isDead());
                     npc = structure?.npc ?? null;
                 }
+            } else if (this.camera.renderingMode === 'mine') {
+                const tile = this.mine.getTile(checkX, checkY);
+                if (tile?.villageStructures) {
+                    const structure = tile.villageStructures.find(s => s.npc && !s.npc.isDead());
+                    npc = structure?.npc ?? null;
+                }
             } else {
                 npc = this.world.getNPCAt(checkX, checkY);
             }
 
-            // If there's a monster that's attacking and targeting the player
-            if (npc && npc.category === 'monster' && npc.isCurrentlyAttacking() && npc.getAttackTarget()) {
-                const attackTarget = npc.getAttackTarget();
+            // If there's a monster or aggressive friendly NPC (bandit) that's attacking and targeting the player
+            if (npc &&
+                ((npc.category === 'monster') || (npc.category === 'friendly' && (npc as NPC).aggressive)) &&
+                npc.isCurrentlyAttacking?.() &&
+                npc.getAttackTarget?.()) {
+                const attackTarget = npc.getAttackTarget?.();
                 if (attackTarget) {
                     const targetTileX = Math.floor(attackTarget.x / WorldGenerator.TILE_SIZE);
                     const targetTileY = Math.floor(attackTarget.y / WorldGenerator.TILE_SIZE);
 
-                    // Check if monster is attacking the player's tile
+                    // Check if monster/bandit is attacking the player's tile
                     if (targetTileX === playerTileX && targetTileY === playerTileY) {
                         console.log(`🗡️ ${npc.type} attacks player!`);
-                        this.player.takeDamage(5); // Monsters deal 5 damage
+                        this.player.takeDamage(5); // Monsters and bandits deal 5 damage
                     }
                 }
             }

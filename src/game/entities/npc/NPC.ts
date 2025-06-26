@@ -281,8 +281,13 @@ export class NPC {
       this.handleMonsterBehavior(deltaTime, playerPosition, nearbyNPCs);
     }
 
+    // Handle bandit behavior - aggressive friendly NPCs that attack monsters and players
+    if (this.category === 'friendly' && this.aggressive) {
+      this.handleBanditBehavior(deltaTime, playerPosition, nearbyNPCs);
+    }
+
     // Handle trader behavior - attraction to village buildings and monster avoidance
-    if (this.category === 'friendly') {
+    if (this.category === 'friendly' && !this.aggressive) {
       this.handleTraderBehavior(nearbyVillageBuildings, nearbyNPCs);
     }
 
@@ -591,9 +596,9 @@ export class NPC {
       }
 
       // Check nearby friendly NPCs
-    for (const npc of nearbyNPCs) {
-      if (npc.category !== 'monster' && !npc.isDead()) {
-        const distance = this.getDistanceToNPC(npc);
+      for (const npc of nearbyNPCs) {
+        if (npc.category !== 'monster' && !npc.isDead()) {
+          const distance = this.getDistanceToNPC(npc);
           if (distance <= 1) {
             this.startAttack(npc.position);
             npc.takeDamage(5); // Deal 5 damage as specified
@@ -651,6 +656,90 @@ export class NPC {
           }
         }
       }
+    }
+  }
+
+  // New method for bandit behavior (attacks monsters and players, but not other bandits)
+  private handleBanditBehavior(deltaTime: number, playerPosition: Position, nearbyNPCs: NPC[]): void {
+    if (!this.aggressive || this.category !== 'friendly') return; // Only aggressive friendly NPCs (bandits)
+
+    const now = Date.now();
+
+    // Bandit flocking behavior - move towards monsters and player
+    const targets = [
+      { position: playerPosition, priority: 2 },
+      ...nearbyNPCs
+        .filter(npc => npc.category === 'monster' && !npc.isDead())
+        .map(npc => ({ position: npc.position, priority: 1 }))
+    ];
+
+    if (targets.length > 0 && !this.isAttacking) {
+      // Find closest target for flocking
+      let closestTarget: Position | null = null;
+      let minDistance = Infinity;
+
+      for (const target of targets) {
+        const distance = this.getDistanceToPosition(target.position);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestTarget = target.position;
+        }
+      }
+
+      // Move towards target if not adjacent
+      if (closestTarget && minDistance > 1.5) {
+        const adjacentTile = this.getAdjacentTileTowards(closestTarget);
+        if (adjacentTile && this.canMoveTo(adjacentTile)) {
+          this.moveToPosition(adjacentTile);
+          this.moveCooldown = this.moveDelay;
+          return;
+        }
+      }
+    }
+
+    // Attack behavior - attack adjacent monsters and player
+    if (now - this.lastAttackTime >= this.attackCooldown) {
+      // Check player
+      const playerDistance = this.getDistanceToPosition(playerPosition);
+      if (playerDistance <= 1) {
+        this.startAttack(playerPosition);
+        // Player damage should be handled by the game system
+        this.lastAttackTime = now;
+        return;
+      }
+
+      // Check nearby monsters (bandits attack monsters)
+      for (const npc of nearbyNPCs) {
+        if (npc.category === 'monster' && !npc.isDead()) {
+          const distance = this.getDistanceToNPC(npc);
+          if (distance <= 1) {
+            console.log(`🏴‍☠️ ${this.type} bandit attacks ${npc.type} monster!`);
+            this.startAttack(npc.position);
+            npc.takeDamage(5); // Deal 5 damage to monsters
+
+            // If the monster died from our attack, collect its drops
+            if (npc.isDead()) {
+              const victimDrops = npc.getDropItems();
+              for (const drop of victimDrops) {
+                if (drop.quantity > 0) {
+                  const added = this.inventory.addItem(drop.type, drop.quantity);
+                  if (added) {
+                    console.log(`🎯 ${this.type} bandit collected ${drop.quantity}x ${drop.type} from killed ${npc.type}`);
+                  } else {
+                    console.log(`🎯 ${this.type} bandit inventory full! Could not collect ${drop.quantity}x ${drop.type} from ${npc.type}`);
+                  }
+                }
+              }
+            }
+
+            this.lastAttackTime = now;
+            break;
+          }
+        }
+      }
+
+      // Do NOT attack other bandits (friendly NPCs with aggressive=true)
+      // This differentiates bandits from monsters
     }
   }
 
@@ -950,10 +1039,15 @@ export class NPC {
       // Attack animations
       const attackOffset = this.getAttackDirectionOffset();
       spriteIndex = attackOffset + this.currentFrame;
+
+      // Debug: Log attack rendering
+      if (Math.random() < 0.01) { // Only log 1% of the time to avoid spam
+        console.log(`🎯 Rendering ${this.type} attack frame: ${spriteIndex} (offset: ${attackOffset}, frame: ${this.currentFrame})`);
+      }
     } else {
       // Movement animations
-    const directionOffset = this.getDirectionOffset();
-    spriteIndex = directionOffset + this.currentFrame;
+      const directionOffset = this.getDirectionOffset();
+      spriteIndex = directionOffset + this.currentFrame;
     }
 
     // Special case: farmer_goblin left direction uses flipped right frames
@@ -965,22 +1059,48 @@ export class NPC {
     const spriteX = (spriteIndex % spritesPerRow) * spriteSize;
     const spriteY = Math.floor(spriteIndex / spritesPerRow) * spriteSize;
 
-    if (shouldFlip) {
-      // Flip horizontally for farmer_goblin left direction
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(
-        this.sprite,
-        spriteX, spriteY, spriteSize, spriteSize,
-        -(x + spriteSize), y, spriteSize, spriteSize
-      );
-      ctx.restore();
+    // Ensure we don't render outside sprite bounds - fallback to idle frame
+    const maxSpriteIndex = (this.sprite.width / spriteSize) * (this.sprite.height / spriteSize) - 1;
+    if (spriteIndex > maxSpriteIndex) {
+      console.warn(`⚠️ ${this.type} sprite index ${spriteIndex} exceeds max ${maxSpriteIndex}, falling back to idle`);
+      const fallbackOffset = this.getDirectionOffset();
+      const fallbackSpriteX = (fallbackOffset % spritesPerRow) * spriteSize;
+      const fallbackSpriteY = Math.floor(fallbackOffset / spritesPerRow) * spriteSize;
+
+      if (shouldFlip) {
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          this.sprite,
+          fallbackSpriteX, fallbackSpriteY, spriteSize, spriteSize,
+          -(x + spriteSize), y, spriteSize, spriteSize
+        );
+        ctx.restore();
+      } else {
+        ctx.drawImage(
+          this.sprite,
+          fallbackSpriteX, fallbackSpriteY, spriteSize, spriteSize,
+          x, y, spriteSize, spriteSize
+        );
+      }
     } else {
-    ctx.drawImage(
-      this.sprite,
-      spriteX, spriteY, spriteSize, spriteSize,
-      x, y, spriteSize, spriteSize
-    );
+      if (shouldFlip) {
+        // Flip horizontally for farmer_goblin left direction
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          this.sprite,
+          spriteX, spriteY, spriteSize, spriteSize,
+          -(x + spriteSize), y, spriteSize, spriteSize
+        );
+        ctx.restore();
+      } else {
+        ctx.drawImage(
+          this.sprite,
+          spriteX, spriteY, spriteSize, spriteSize,
+          x, y, spriteSize, spriteSize
+        );
+      }
     }
 
     // Render health bar if damaged
@@ -1663,8 +1783,8 @@ export class NPC {
       spriteIndex = attackOffset + this.currentFrame;
     } else {
       // Movement animations
-    const directionOffset = this.getDirectionOffset();
-    spriteIndex = directionOffset + this.currentFrame;
+      const directionOffset = this.getDirectionOffset();
+      spriteIndex = directionOffset + this.currentFrame;
     }
 
     // Special case: farmer_goblin left direction uses flipped right frames
@@ -1676,22 +1796,48 @@ export class NPC {
     const spriteX = (spriteIndex % spritesPerRow) * spriteSize;
     const spriteY = Math.floor(spriteIndex / spritesPerRow) * spriteSize;
 
-    if (shouldFlip) {
-      // Flip horizontally for farmer_goblin left direction
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(
-        this.sprite,
-        spriteX, spriteY, spriteSize, spriteSize,
-        -(x + spriteSize), y, spriteSize, spriteSize
-      );
-      ctx.restore();
+    // Ensure we don't render outside sprite bounds - fallback to idle frame
+    const maxSpriteIndex = (this.sprite.width / spriteSize) * (this.sprite.height / spriteSize) - 1;
+    if (spriteIndex > maxSpriteIndex) {
+      console.warn(`⚠️ ${this.type} sprite index ${spriteIndex} exceeds max ${maxSpriteIndex}, falling back to idle`);
+      const fallbackOffset = this.getDirectionOffset();
+      const fallbackSpriteX = (fallbackOffset % spritesPerRow) * spriteSize;
+      const fallbackSpriteY = Math.floor(fallbackOffset / spritesPerRow) * spriteSize;
+
+      if (shouldFlip) {
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          this.sprite,
+          fallbackSpriteX, fallbackSpriteY, spriteSize, spriteSize,
+          -(x + spriteSize), y, spriteSize, spriteSize
+        );
+        ctx.restore();
+      } else {
+        ctx.drawImage(
+          this.sprite,
+          fallbackSpriteX, fallbackSpriteY, spriteSize, spriteSize,
+          x, y, spriteSize, spriteSize
+        );
+      }
     } else {
-    ctx.drawImage(
-      this.sprite,
-      spriteX, spriteY, spriteSize, spriteSize,
-      x, y, spriteSize, spriteSize
-    );
+      if (shouldFlip) {
+        // Flip horizontally for farmer_goblin left direction
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          this.sprite,
+          spriteX, spriteY, spriteSize, spriteSize,
+          -(x + spriteSize), y, spriteSize, spriteSize
+        );
+        ctx.restore();
+      } else {
+        ctx.drawImage(
+          this.sprite,
+          spriteX, spriteY, spriteSize, spriteSize,
+          x, y, spriteSize, spriteSize
+        );
+      }
     }
 
     // Render wide attack animation for SpearGoblin if attacking

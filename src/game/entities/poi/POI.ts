@@ -57,6 +57,10 @@ export class POI {
     this.dropItems = config.dropItems ?? [];
     this.customData = config.customData ?? {};
 
+    if (this.type === 'tombstone') {
+      console.log(`🪦 Creating tombstone POI with customData:`, this.customData);
+    }
+
     this.loadAsset();
   }
 
@@ -68,11 +72,27 @@ export class POI {
       return normalizedAssetName === this.type || this.type.includes(normalizedAssetName);
     });
 
+    if (this.type === 'tombstone') {
+      console.log(`🪦 Looking for tombstone asset...`);
+      console.log(`🔍 Asset search result:`, asset ? {
+        name: asset.name,
+        spritePath: asset.spritePath,
+        index: asset.index,
+        category: asset.category
+      } : 'Not found');
+    }
+
     if (asset && typeof asset.spritePath === 'string') {
       this.asset = asset;
+      if (this.type === 'tombstone') {
+        console.log(`✅ Tombstone asset found, loading sprite from: ${asset.spritePath}`);
+      }
       void this.loadSprite(asset.spritePath);
     } else {
       console.warn(`No asset found for POI type: ${this.type}`);
+      if (this.type === 'tombstone') {
+        console.error(`❌ CRITICAL: Tombstone asset not found! Available assets:`, Object.keys(ASSET_MAP));
+      }
     }
   }
 
@@ -316,7 +336,17 @@ export class POI {
   }
 
   public render(ctx: CanvasRenderingContext2D, x: number, y: number, scale = 1): void {
-    if (!this.isLoaded || !this.sprite || !this.asset) return;
+    if (!this.isLoaded || !this.sprite || !this.asset) {
+      if (this.type === 'tombstone') {
+        console.log(`🪦 Cannot render tombstone: isLoaded=${this.isLoaded}, sprite=${!!this.sprite}, asset=${!!this.asset}`);
+      }
+      return;
+    }
+
+    if (this.type === 'tombstone') {
+      const variant = this.customData.tombstoneVariant as number | undefined ?? 'unknown';
+      console.log(`🎨 Rendering tombstone at (${x}, ${y}) with variant ${variant}`);
+    }
 
     const frameIndex = this.animated ?
       (this.animationFrames[this.currentFrame] ?? 0) :
@@ -325,6 +355,10 @@ export class POI {
     const spritesPerRow = Math.floor(this.sprite.width / spriteSize);
     const spriteX = (frameIndex % spritesPerRow) * spriteSize;
     const spriteY = Math.floor(frameIndex / spritesPerRow) * spriteSize;
+
+    if (this.type === 'tombstone') {
+      console.log(`🎨 Tombstone render details: frameIndex=${frameIndex}, spriteX=${spriteX}, spriteY=${spriteY}, spritesPerRow=${spritesPerRow}`);
+    }
 
     ctx.drawImage(
       this.sprite,
@@ -337,6 +371,10 @@ export class POI {
       spriteSize * scale,
       spriteSize * scale
     );
+
+    if (this.type === 'tombstone') {
+      console.log(`✅ Tombstone rendered successfully`);
+    }
   }
 
   public isAt(position: Position): boolean {

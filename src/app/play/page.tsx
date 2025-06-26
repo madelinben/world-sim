@@ -21,7 +21,8 @@ function PlayGameComponent() {
 
     if (canvasRef.current) {
       const seed = searchParams?.get('seed') ?? undefined;
-      gameRef.current = new Game(canvasRef.current, seed);
+      const playerName = searchParams?.get('playerName') ?? undefined;
+      gameRef.current = new Game(canvasRef.current, seed, playerName);
       gameRef.current.start();
     }
 

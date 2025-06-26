@@ -21,7 +21,7 @@ export interface PersistentInfo {
   nearestMine: { x: number; y: number } | null;
   nearestDungeon: { x: number; y: number } | null;
   nearestPortal: { x: number; y: number } | null;
-  renderingMode: 'world' | 'dungeon';
+  renderingMode: 'world' | 'dungeon' | 'mine';
 }
 
 export interface ArmorSlot {
@@ -68,7 +68,7 @@ export class UIManager {
   private readonly menuOptions = ['Back to Game', 'Save Game'];
 
   // Player character data
-  private playerName = 'Player'; // Default player name
+  private playerName = 'Hero'; // Default player name
   private playerSprite: HTMLImageElement | null = null;
   private playerSpriteLoaded = false;
 
@@ -79,7 +79,13 @@ export class UIManager {
 
   // Player inventory UI navigation state
   private playerInventorySelectedSlot = 0; // 0-8 for inventory, 9-15 for armor slots
-  private readonly maxInventorySlots = 16; // 9 inventory + 7 armor slots
+  private readonly maxInventorySlots = 16;
+
+  // Player name editing state
+  private isEditingPlayerName = false;
+  private editingPlayerName = '';
+  private playerNameCursorVisible = true;
+  private playerNameCursorTimer = 0;
 
   // Armor slots for player
   private armorSlots: ArmorSlot[] = [
@@ -216,12 +222,23 @@ export class UIManager {
 
   public update(deltaTime: number): void {
     // Update player sprite animation for inventory UI
-    this.playerSpriteLastFrameTime += deltaTime * 1000; // Convert to milliseconds
-    const timePerFrame = this.playerSpriteAnimationDuration / 4; // 4 frames for walking animation
+    if (this.playerSpriteLoaded && this.playerSprite) {
+      this.playerSpriteLastFrameTime += deltaTime * 1000;
+      const frameTime = this.playerSpriteAnimationDuration / 4; // 4 frames per animation
 
-    if (this.playerSpriteLastFrameTime >= timePerFrame) {
-      this.playerSpriteLastFrameTime = 0;
-      this.playerSpriteAnimationFrame = (this.playerSpriteAnimationFrame + 1) % 4; // Cycle through 4 frames
+      if (this.playerSpriteLastFrameTime >= frameTime) {
+        this.playerSpriteAnimationFrame = (this.playerSpriteAnimationFrame + 1) % 4;
+        this.playerSpriteLastFrameTime = 0;
+      }
+    }
+
+    // Update cursor blinking for player name editing
+    if (this.isEditingPlayerName) {
+      this.playerNameCursorTimer += deltaTime * 1000;
+      if (this.playerNameCursorTimer >= 500) { // Blink every 500ms
+        this.playerNameCursorVisible = !this.playerNameCursorVisible;
+        this.playerNameCursorTimer = 0;
+      }
     }
   }
 
@@ -234,7 +251,6 @@ export class UIManager {
     this.renderTextBox();
     this.renderPlayerInventoryUI(inventory, selectedSlot);
     this.renderTradeInventoryUI(inventory, selectedSlot);
-    this.renderTombstoneUI();
     this.renderChestUI(inventory, selectedSlot);
     this.renderMenuUI();
     this.renderConsoleUI();
@@ -368,14 +384,14 @@ export class UIManager {
 
     // Draw item if present
     if (item && item.quantity > 0) {
-      // Simple colored circle for item representation
-      const itemColor = this.getItemColor(item.type);
+      // Simple coloured circle for item representation
+      const itemColour = this.getItemColour(item.type);
       const centerX = x + size / 2;
       const centerY = y + size / 2;
       const radius = size * 0.25;
 
       ctx.save();
-      ctx.fillStyle = itemColor;
+      ctx.fillStyle = itemColour;
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -405,9 +421,9 @@ export class UIManager {
     }
   }
 
-  private getItemColor(itemType: string): string {
-    // Color mapping for different item types
-    const colors: Record<string, string> = {
+      private getItemColour(itemType: string): string {
+        // Colour mapping for different item types
+        const colours: Record<string, string> = {
       'wood': '#8d6e63',
       'stone': '#607d8b',
       'wheat': '#ffc107',
@@ -419,7 +435,7 @@ export class UIManager {
       'milk': '#f5f5f5'
     };
 
-    return colors[itemType] ?? '#9e9e9e';
+            return colours[itemType] ?? '#9e9e9e';
   }
 
   private renderInventoryUI(): void {
@@ -642,15 +658,21 @@ export class UIManager {
   // Tombstone UI methods
   public showTombstoneUI(tombstone: Tombstone): void {
     this.tombstoneUIVisible = true;
+    this.tradeInventoryUIVisible = true; // Use trade inventory UI for tombstones
     this.currentTombstone = tombstone;
     this.tombstoneSelectedSlot = 0; // Reset to first slot
+    this.dualInventoryMode = 'player'; // Start with player side selected
+    this.playerSelectedSlot = 0; // Reset player selection
     console.log(`Tombstone UI opened for ${tombstone.getDisplayName()}`);
   }
 
   public hideTombstoneUI(): void {
     this.tombstoneUIVisible = false;
+    this.tradeInventoryUIVisible = false; // Also hide trade inventory UI
     this.currentTombstone = null;
     this.tombstoneSelectedSlot = 0;
+    this.dualInventoryMode = 'player'; // Reset to player mode
+    this.playerSelectedSlot = 0; // Reset selection
     console.log('Tombstone UI closed');
   }
 
@@ -666,90 +688,21 @@ export class UIManager {
     return this.tombstoneSelectedSlot;
   }
 
-  public navigateTombstoneInventory(direction: 'left' | 'right'): void {
+  public navigateTombstoneInventory(direction: 'left' | 'right' | 'up' | 'down'): void {
     if (!this.tombstoneUIVisible || !this.currentTombstone) return;
 
-    if (direction === 'left') {
-      this.tombstoneSelectedSlot = (this.tombstoneSelectedSlot - 1 + 9) % 9;
-    } else {
-      this.tombstoneSelectedSlot = (this.tombstoneSelectedSlot + 1) % 9;
+    // Use the same navigation logic as chest inventory but handle both chest and tombstone
+    if (this.currentChest) {
+      this.navigateChestInventory(direction);
+    } else if (this.currentTombstone) {
+      // Apply the same navigation logic for tombstones
+      this.navigateDualInventory(direction, 'tombstone');
     }
-    console.log(`Tombstone slot selected: ${this.tombstoneSelectedSlot + 1}`);
   }
 
   public getTombstoneSelectedItem(): InventoryItem | null {
     if (!this.currentTombstone) return null;
     return this.currentTombstone.inventory[this.tombstoneSelectedSlot] ?? null;
-  }
-
-  private renderTombstoneUI(): void {
-    if (!this.tombstoneUIVisible || !this.currentTombstone) return;
-
-    const canvas = this.canvas;
-    const ctx = this.ctx;
-    const tombstone = this.currentTombstone; // Create a local reference for type safety
-
-    // Calculate tombstone UI dimensions to match text box width
-    const slotSize = 40;
-    const slotSpacing = 8;
-    const slotsPerRow = 3;
-    const rows = 3;
-    const contentWidth = (slotSize * slotsPerRow) + (slotSpacing * (slotsPerRow - 1));
-    const contentHeight = (slotSize * rows) + (slotSpacing * (rows - 1));
-    const padding = 20;
-    const titleHeight = 40;
-    const descriptionHeight = 60;
-
-    const tombstoneWidth = contentWidth + (padding * 2);
-    const tombstoneHeight = titleHeight + descriptionHeight + contentHeight + (padding * 2);
-    const tombstoneX = (canvas.width - tombstoneWidth) / 2;
-    const tombstoneY = (canvas.height - tombstoneHeight) / 2;
-
-    // Draw tombstone background
-    this.drawBubble(ctx, tombstoneX, tombstoneY, tombstoneWidth, tombstoneHeight, 15, '#f8f9fa', '#dee2e6');
-
-    // Draw tombstone title
-    ctx.fillStyle = '#2c3e50';
-    ctx.font = this.fontLoaded ? '12px "Press Start 2P"' : 'bold 16px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(tombstone.getDisplayName(), tombstoneX + tombstoneWidth / 2, tombstoneY + titleHeight / 2);
-
-    // Draw tombstone description with word wrapping
-    ctx.fillStyle = '#34495e';
-    ctx.font = this.fontLoaded ? '8px "Press Start 2P"' : '12px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-
-    const itemCount = tombstone.inventory.filter(item => item !== null).length;
-    const description = `Press Left/Right to navigate, Z to take all, X to take selected, F to close. Items: ${itemCount}/9`;
-    const maxWidth = tombstoneWidth - (padding * 2);
-    const lines = this.wrapText(description, maxWidth, this.fontLoaded ? '8px "Press Start 2P"' : '12px Arial');
-    const lineHeight = this.fontLoaded ? 12 : 16;
-    const descStartY = tombstoneY + titleHeight + 10;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line) {
-        ctx.fillText(line, tombstoneX + tombstoneWidth / 2, descStartY + (i * lineHeight));
-      }
-    }
-
-    // Draw tombstone inventory slots in 3x3 grid
-    const gridStartX = tombstoneX + padding;
-    const gridStartY = tombstoneY + titleHeight + descriptionHeight;
-
-    for (let i = 0; i < 9; i++) {
-      const row = Math.floor(i / slotsPerRow);
-      const col = i % slotsPerRow;
-      const slotX = gridStartX + col * (slotSize + slotSpacing);
-      const slotY = gridStartY + row * (slotSize + slotSpacing);
-
-      const item = tombstone.inventory[i] ?? null;
-      const isSelected = i === this.tombstoneSelectedSlot;
-
-      this.renderInventorySlot(ctx, slotX, slotY, slotSize, item, isSelected, i + 1);
-    }
   }
 
   // Chest UI methods
@@ -784,104 +737,7 @@ export class UIManager {
 
   public navigateChestInventory(direction: 'left' | 'right' | 'up' | 'down'): void {
     if (!this.chestUIVisible || !this.currentChest) return;
-
-    // Determine current position based on mode and selected slot
-    let currentSlot: number;
-    let isPlayerSide: boolean;
-
-    if (this.dualInventoryMode === 'player') {
-      currentSlot = this.playerSelectedSlot;
-      isPlayerSide = true;
-    } else {
-      currentSlot = this.chestSelectedSlot;
-      isPlayerSide = false;
-    }
-
-    let newSlot = currentSlot;
-    let newSide = isPlayerSide;
-
-    // Calculate current row and column within the 3x3 grid
-    const row = Math.floor(currentSlot / 3);
-    const col = currentSlot % 3;
-
-    switch (direction) {
-      case 'up':
-        // Move up within current grid, wrap to bottom if at top
-        if (row > 0) {
-          newSlot = (row - 1) * 3 + col;
-        } else {
-          newSlot = 6 + col; // Wrap to bottom row
-        }
-        break;
-
-      case 'down':
-        // Move down within current grid, wrap to top if at bottom
-        if (row < 2) {
-          newSlot = (row + 1) * 3 + col;
-        } else {
-          newSlot = col; // Wrap to top row
-        }
-        break;
-
-      case 'left':
-        if (isPlayerSide) {
-          // Currently on player side
-          if (col > 0) {
-            // Move left within player grid
-            newSlot = currentSlot - 1;
-          } else {
-            // At leftmost column of player grid, wrap to rightmost column of same row
-            newSlot = currentSlot + 2;
-          }
-        } else {
-          // Currently on container side
-          if (col > 0) {
-            // Move left within container grid
-            newSlot = currentSlot - 1;
-          } else {
-            // At leftmost column of container, move to corresponding position in player grid
-            newSide = true; // Switch to player side
-            newSlot = row * 3 + 2; // Move to rightmost column of same row in player grid
-          }
-        }
-        break;
-
-      case 'right':
-        if (isPlayerSide) {
-          // Currently on player side
-          if (col < 2) {
-            // Move right within player grid
-            newSlot = currentSlot + 1;
-          } else {
-            // At rightmost column of player grid, move to corresponding position in container grid
-            newSide = false; // Switch to container side
-            newSlot = row * 3; // Move to leftmost column of same row in container grid
-          }
-        } else {
-          // Currently on container side
-          if (col < 2) {
-            // Move right within container grid
-            newSlot = currentSlot + 1;
-          } else {
-            // At rightmost column of container, wrap to leftmost column of same row
-            newSlot = currentSlot - 2;
-          }
-        }
-        break;
-    }
-
-    // Apply the new position
-    if (newSide) {
-      // Moving to or staying on player side
-      this.dualInventoryMode = 'player';
-      this.playerSelectedSlot = newSlot;
-      console.log(`Player slot selected: ${newSlot + 1} (row ${Math.floor(newSlot / 3) + 1}, col ${(newSlot % 3) + 1})`);
-    } else {
-      // Moving to or staying on container side
-      this.dualInventoryMode = 'container';
-      this.chestSelectedSlot = newSlot;
-      console.log(`Container slot selected: ${newSlot + 1} (row ${Math.floor(newSlot / 3) + 1}, col ${(newSlot % 3) + 1})`);
-    }
+    this.navigateDualInventory(direction, 'chest');
   }
 
   public getChestSelectedItem(): InventoryItem | null {
@@ -993,12 +849,20 @@ export class UIManager {
     const characterStartX = dimensions.x + halfWidth + 10;
     const characterWidth = halfWidth - 20;
 
-    // Draw character name title
+    // Draw character name title (editable)
     ctx.fillStyle = '#2c3e50';
     ctx.font = this.fontLoaded ? '12px "Press Start 2P"' : 'bold 16px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${this.playerName}:`, characterStartX + characterWidth / 2, dimensions.y + 25);
+
+    const displayName = this.isEditingPlayerName ? this.editingPlayerName : this.playerName;
+    const nameText = `Player: ${displayName}`;
+
+    // Add cursor if editing
+    const finalText = this.isEditingPlayerName && this.playerNameCursorVisible ?
+      `Player: ${displayName}|` : nameText;
+
+    ctx.fillText(finalText, characterStartX + characterWidth / 2, dimensions.y + 25);
 
     // Layout: Armor slots on left, player sprite on right
     // Use same slot size as inventory for consistency
@@ -1223,14 +1087,14 @@ export class UIManager {
 
     // Draw item if present
     if (item && item.quantity > 0) {
-      // Simple colored circle for item representation
-      const itemColor = this.getItemColor(item.type);
+      // Simple coloured circle for item representation
+      const itemColour = this.getItemColour(item.type);
       const centerX = x + size / 2;
       const centerY = y + size / 2;
       const radius = size * 0.2;
 
       ctx.save();
-      ctx.fillStyle = itemColor;
+      ctx.fillStyle = itemColour;
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -1424,6 +1288,18 @@ export class UIManager {
   }
 
   // Player inventory UI navigation methods - Intuitive visual direction navigation
+  public getWearableItems(): { type: string }[] {
+    // Extract items from wearable armor slot
+    const wearableSlot = this.armorSlots.find(slot => slot.type === 'wearable');
+    const wearableItems: { type: string }[] = [];
+
+    if (wearableSlot?.item) {
+      wearableItems.push({ type: wearableSlot.item.type });
+    }
+
+    return wearableItems;
+  }
+
   public navigatePlayerInventory(direction: 'up' | 'down' | 'left' | 'right'): void {
     if (!this.inventoryUIVisible) return;
 
@@ -1568,5 +1444,170 @@ export class UIManager {
 
   public getPlayerInventorySelectedSlot(): number {
     return this.playerInventorySelectedSlot;
+  }
+
+  // Player name editing methods
+  public startEditingPlayerName(currentName: string): void {
+    this.isEditingPlayerName = true;
+    this.editingPlayerName = currentName;
+    this.playerNameCursorVisible = true;
+    this.playerNameCursorTimer = 0;
+    console.log('Started editing player name');
+  }
+
+  public finishEditingPlayerName(): string {
+    this.isEditingPlayerName = false;
+    const newName = this.editingPlayerName.trim() || 'Hero';
+    this.editingPlayerName = '';
+    console.log(`Finished editing player name: ${newName}`);
+    return newName;
+  }
+
+  public cancelEditingPlayerName(): void {
+    this.isEditingPlayerName = false;
+    this.editingPlayerName = '';
+    console.log('Cancelled editing player name');
+  }
+
+  public getIsEditingPlayerName(): boolean {
+    return this.isEditingPlayerName;
+  }
+
+  public handlePlayerNameInput(key: string): void {
+    if (!this.isEditingPlayerName) return;
+
+    if (key === 'Enter') {
+      // Finish editing - handled by Game.ts
+      return;
+    } else if (key === 'Escape') {
+      this.cancelEditingPlayerName();
+      return;
+    } else if (key === 'Backspace') {
+      this.editingPlayerName = this.editingPlayerName.slice(0, -1);
+    } else if (key.length === 1 && this.editingPlayerName.length < 20) {
+      // Only allow printable characters and limit to 20 characters
+      if (/^[a-zA-Z0-9\s\-_]$/.test(key)) {
+        this.editingPlayerName += key;
+      }
+    }
+  }
+
+  // Update player name from game
+  public setPlayerName(name: string): void {
+    this.playerName = name;
+  }
+
+  public getPlayerName(): string {
+    return this.playerName;
+  }
+
+  // Unified navigation method for both chest and tombstone dual inventory
+  private navigateDualInventory(direction: 'left' | 'right' | 'up' | 'down', containerType: 'chest' | 'tombstone'): void {
+    // Determine current position based on mode and selected slot
+    let currentSlot: number;
+    let isPlayerSide: boolean;
+
+    if (this.dualInventoryMode === 'player') {
+      currentSlot = this.playerSelectedSlot;
+      isPlayerSide = true;
+    } else {
+      if (containerType === 'chest') {
+        currentSlot = this.chestSelectedSlot;
+      } else {
+        currentSlot = this.tombstoneSelectedSlot;
+      }
+      isPlayerSide = false;
+    }
+
+    let newSlot = currentSlot;
+    let newSide = isPlayerSide;
+
+    // Calculate current row and column within the 3x3 grid
+    const row = Math.floor(currentSlot / 3);
+    const col = currentSlot % 3;
+
+    switch (direction) {
+      case 'up':
+        // Move up within current grid, wrap to bottom if at top
+        if (row > 0) {
+          newSlot = (row - 1) * 3 + col;
+        } else {
+          newSlot = 6 + col; // Wrap to bottom row
+        }
+        break;
+
+      case 'down':
+        // Move down within current grid, wrap to top if at bottom
+        if (row < 2) {
+          newSlot = (row + 1) * 3 + col;
+        } else {
+          newSlot = col; // Wrap to top row
+        }
+        break;
+
+      case 'left':
+        if (isPlayerSide) {
+          // Currently on player side
+          if (col > 0) {
+            // Move left within player grid
+            newSlot = currentSlot - 1;
+          } else {
+            // At leftmost column of player grid, wrap to rightmost column of same row
+            newSlot = currentSlot + 2;
+          }
+        } else {
+          // Currently on container side
+          if (col > 0) {
+            // Move left within container grid
+            newSlot = currentSlot - 1;
+          } else {
+            // At leftmost column of container, move to corresponding position in player grid
+            newSide = true; // Switch to player side
+            newSlot = row * 3 + 2; // Move to rightmost column of same row in player grid
+          }
+        }
+        break;
+
+      case 'right':
+        if (isPlayerSide) {
+          // Currently on player side
+          if (col < 2) {
+            // Move right within player grid
+            newSlot = currentSlot + 1;
+          } else {
+            // At rightmost column of player grid, move to corresponding position in container grid
+            newSide = false; // Switch to container side
+            newSlot = row * 3; // Move to leftmost column of same row in container grid
+          }
+        } else {
+          // Currently on container side
+          if (col < 2) {
+            // Move right within container grid
+            newSlot = currentSlot + 1;
+          } else {
+            // At rightmost column of container, wrap to leftmost column of same row
+            newSlot = currentSlot - 2;
+          }
+        }
+        break;
+    }
+
+    // Apply the new position
+    if (newSide) {
+      // Moving to or staying on player side
+      this.dualInventoryMode = 'player';
+      this.playerSelectedSlot = newSlot;
+      console.log(`Player slot selected: ${newSlot + 1} (row ${Math.floor(newSlot / 3) + 1}, col ${(newSlot % 3) + 1})`);
+    } else {
+      // Moving to or staying on container side
+      this.dualInventoryMode = 'container';
+      if (containerType === 'chest') {
+        this.chestSelectedSlot = newSlot;
+        console.log(`Chest slot selected: ${newSlot + 1} (row ${Math.floor(newSlot / 3) + 1}, col ${(newSlot % 3) + 1})`);
+      } else {
+        this.tombstoneSelectedSlot = newSlot;
+        console.log(`Tombstone slot selected: ${newSlot + 1} (row ${Math.floor(newSlot / 3) + 1}, col ${(newSlot % 3) + 1})`);
+      }
+    }
   }
 }
